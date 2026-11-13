@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pick, type Entry, type Eligibility } from "../src/pick";
-import { collectUserInitiators, findSenders } from "../src/senders";
+import { collectUserInitiators, findSender, senderFromPreview } from "../src/senders";
 import type { Initiator } from "../src/registry";
 
 const row = (id: string, top: number, height = 100): Entry => ({
@@ -146,12 +146,12 @@ describe("pick", () => {
 });
 
 describe("senders", () => {
-  it("collects user rows anywhere in a timeline payload", () => {
+  it("collects user rows anywhere in a payload", () => {
     const out = new Map<string, Initiator>();
     collectUserInitiators(
       [
         { kind: "conversation", role: "user", id: "m1", initiator: "user" },
-        { kind: "turn", rows: [{ kind: "conversation", role: "user", id: "m2", initiator: "agent" }] },
+        { message: { kind: "conversation", role: "user", id: "m2", initiator: "agent" } },
         { kind: "conversation", role: "assistant", id: "m3", initiator: "user" },
         { kind: "conversation", role: "user", id: "m4", initiator: "robot" },
       ],
@@ -163,21 +163,24 @@ describe("senders", () => {
     ]);
   });
 
-  it("pages back until the wanted message is found", async () => {
-    const pages = [
-      { rows: [{ kind: "conversation", role: "user", id: "new", initiator: "user" }], timelinePage: { olderCursor: { anchorId: "a", anchorSeq: 5 } } },
-      { rows: [{ kind: "conversation", role: "user", id: "old", initiator: "system" }], timelinePage: { olderCursor: { anchorId: "b", anchorSeq: 1 } } },
-    ];
-    const cursors: unknown[] = [];
-    const found = await findSenders(
-      async (cursor) => {
-        cursors.push(cursor);
-        return pages[cursors.length - 1] ?? {};
-      },
-      "old",
-      new AbortController().signal,
-    );
-    expect(found.get("old")).toBe("system");
-    expect(cursors).toEqual([null, { anchorId: "a", anchorSeq: 5 }]);
+  it("reads BB's prefixes", () => {
+    expect(senderFromPreview("[bb system] @thread:thr_a completed")).toBe("system");
+    expect(senderFromPreview("[bb message from thread:thr_a] hi")).toBe("agent");
+    expect(senderFromPreview("> quoting [bb system]")).toBeUndefined();
+  });
+
+  it("looks a message up by the sequence in its id", async () => {
+    const seqs: number[] = [];
+    const who = await findSender(async (seq) => {
+      seqs.push(seq);
+      return {
+        message: { kind: "conversation", role: "user", id: "thr_a:user-seed:42", initiator: "system" },
+        before: [],
+        after: [],
+      };
+    }, "thr_a:user-seed:42");
+    expect(who).toBe("system");
+    expect(seqs).toEqual([42]);
+    expect(await findSender(async () => ({}), "no-seq")).toBeUndefined();
   });
 });

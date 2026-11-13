@@ -27,7 +27,7 @@ import {
   type Area,
 } from "./src/registry";
 import { pick, type Entry } from "./src/pick";
-import { findSenders, type TimelinePage } from "./src/senders";
+import { findSender, senderFromPreview } from "./src/senders";
 
 interface OutlineItem {
   id: string;
@@ -180,22 +180,12 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
       if (lookupInFlight) return;
       lookupInFlight = true;
       try {
-        const found = await findSenders(
-          (cursor) =>
-            sdk.threads.timeline({
-              threadId,
-              summaryOnly: "true",
-              deferContent: "true",
-              ...(cursor === null
-                ? {}
-                : { beforeAnchorId: cursor.anchorId, beforeAnchorSeq: String(cursor.anchorSeq) }),
-              signal,
-            }) as Promise<TimelinePage>,
+        const who = await findSender(
+          (seq) => sdk.threads.message({ threadId, seq, before: 0, after: 0, signal }),
           id,
-          signal,
         );
-        for (const [messageId, who] of found) setInitiator(threadId, messageId, who, false);
-        if (!found.has(id)) unresolvedRef.current.add(id);
+        if (who === undefined) unresolvedRef.current.add(id);
+        else setInitiator(threadId, id, who, false);
       } catch (error) {
         if (signal.aborted) return;
         unresolvedRef.current.add(id);
@@ -244,8 +234,9 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
         eligible: (index) => {
           if (includeRef.current) return true;
           const id = outlineIds[index];
-          if (id === undefined) return false;
-          const who = getInitiator(threadId, id);
+          const item = outline[index];
+          if (id === undefined || item === undefined) return false;
+          const who = getInitiator(threadId, id) ?? senderFromPreview(item.preview);
           if (who !== undefined) return who === "user";
           return unresolvedRef.current.has(id) ? true : "unknown";
         },
@@ -321,16 +312,17 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
           width: "100%",
           textAlign: "left",
           // The same surface as BB's own user message bubble:
-          // rounded-xl border border-border-seam bg-surface-recessed px-4 py-2.5
-          // text-sm leading-relaxed. The strip behind it is opaque, so the
+          // rounded-xl border border-border-seam bg-surface-recessed px-4 py-2.5.
+          // The strip behind it is opaque, so the
           // translucent recessed surface reads exactly as it does in the chat.
-          borderRadius: "0.75rem",
+          borderRadius: "calc(var(--radius) + 4px)",
           border: "1px solid var(--border-seam)",
           background: "var(--surface-recessed)",
           color: "var(--foreground)",
           padding: "0.625rem 1rem",
-          fontSize: "0.875rem",
-          lineHeight: 1.625,
+          // The prompt box's size: BB sets --text-sm per theme.
+          fontSize: "var(--text-sm)",
+          lineHeight: "var(--text-sm--line-height)",
           fontFamily: "inherit",
           cursor: "pointer",
         }}
