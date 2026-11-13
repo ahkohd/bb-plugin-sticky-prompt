@@ -22,7 +22,7 @@ export const TOP_LEVEL_LIST = `[${LIST_ATTR}="${TOP_LEVEL}"]`;
 
 const areas = new Map<HTMLElement, Area>();
 const areaKeys = new WeakMap<HTMLElement, number>();
-const scrollContainers = new WeakMap<Element, HTMLElement | null>();
+const scrollContainers = new WeakMap<Element, HTMLElement>();
 let nextKey = 1;
 let snapshot: readonly Area[] = [];
 const areaListeners = new Set<() => void>();
@@ -100,19 +100,18 @@ export function topLevelListOf(row: Element): HTMLElement | null {
   return list;
 }
 
+// Only hits are cached: a chat may not be scrollable yet on its first look.
 function scrollContainerOf(list: Element): HTMLElement | null {
   const cached = scrollContainers.get(list);
-  if (cached !== undefined && (cached === null || cached.isConnected)) return cached;
-  let found: HTMLElement | null = null;
+  if (cached?.isConnected === true) return cached;
   for (let node = list.parentElement; node !== null && node !== document.body; node = node.parentElement) {
     const overflowY = getComputedStyle(node).overflowY;
     if (overflowY === "auto" || overflowY === "scroll") {
-      found = node;
-      break;
+      scrollContainers.set(list, node);
+      return node;
     }
   }
-  scrollContainers.set(list, found);
-  return found;
+  return null;
 }
 
 export function rowSelector(messageId: string): string {

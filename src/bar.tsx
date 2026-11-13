@@ -1,7 +1,7 @@
 // The bar for one chat: which message to pin, where to draw it, and what
 // clicking, scrolling and touching it do.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { TouchEvent, WheelEvent } from "react";
+import type { TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { Markdown, useSdk } from "@get-bb/plugin-sdk/app";
 import {
@@ -32,15 +32,18 @@ interface Shown {
 }
 
 const OUTLINE_REFRESH_MS = 1500;
-/** A row the outline still lacks after this many fetches stops asking. */
-const MAX_OUTLINE_MISSES = 3;
 const MAX_CACHED_MESSAGES = 40;
+const MAX_OWNERS = 5000;
+const MAX_UNRESOLVED = 500;
+/** Until the bar has been drawn once, assume one line of text. */
+const DEFAULT_BAR_HEIGHT = 56;
+const USER_ROW = /:user-seed:\d+$/;
 const MAX_THUMBS = 3;
 const THUMB_SIZE = 32;
 /** BB cuts outline previews at this many characters, without an ellipsis. */
 const PREVIEW_MAX_LENGTH = 200;
-/** Frames a jump waits at the top for BB to load older rows. */
-const JUMP_PATIENCE_FRAMES = 90;
+/** Two-frame steps a jump waits at the top for BB to load older rows. */
+const JUMP_PATIENCE_STEPS = 90;
 /** Frames a jump spends correcting for rows BB measures as they mount. */
 const SETTLE_FRAMES = 20;
 const JUMP_MARGIN = 12;
@@ -140,12 +143,32 @@ async function jumpTo(scrollEl: HTMLElement, id: string, signal: AbortSignal): P
     await nextFrame();
     const moved = scrollEl.scrollTop < scrollTop || scrollEl.scrollHeight !== scrollHeight;
     idle = moved ? 0 : idle + 1;
-    if (idle > JUMP_PATIENCE_FRAMES) return;
+    if (idle > JUMP_PATIENCE_STEPS) return;
+  }
+}
+
+/** Keys that mean the user is moving the chat themselves. */
+const TAKEOVER_KEYS = new Set(["Escape", "ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", "Tab"]);
+
+/** Drop the oldest entries past the bound. */
+function bound<K, V>(map: Map<K, V>, max: number): void {
+  for (const key of map.keys()) {
+    if (map.size <= max) return;
+    map.delete(key);
+  }
+}
+
+function remember(set: Set<string>, value: string): void {
+  set.delete(value);
+  set.add(value);
+  for (const oldest of set) {
+    if (set.size <= MAX_UNRESOLVED) return;
+    set.delete(oldest);
   }
 }
 
 /** Wheel deltas in pixels, whatever unit the device reported. */
-function wheelPixels(event: WheelEvent, scrollEl: HTMLElement): number {
+function wheelPixels(event: ReactWheelEvent, scrollEl: HTMLElement): number {
   if (event.deltaMode === 1) return event.deltaY * 16;
   if (event.deltaMode === 2) return event.deltaY * scrollEl.clientHeight;
   return event.deltaY;
@@ -183,7 +206,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
   const [source, setSource] = useState<{ id: string; markdown: string } | null>(null);
   const shownRef = useRef<Shown | null>(null);
   shownRef.current = shown;
-  const messagesRef = useRef(new Map<string, Promise<unknown>>());
+  const messagesRef = useRef(new Map<number, Promise<unknown>>());
   const projectRef = useRef<Promise<string | null> | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
   const itemsRef = useRef<OutlineItem[]>([]);
@@ -196,12 +219,13 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
   const jumpRef = useRef<AbortController | null>(null);
   const touchRef = useRef<number | null>(null);
 
-  // One `threads.message` answer per message and preview, shared by the
-  // sender check, the text and the thumbnails. Bounded, most recent kept.
+  // One `threads.message` answer per message, shared by the sender check,
+  // the text and the thumbnails. A message's id carries its event sequence,
+  // so an edit is a new message. Bounded, most recent kept.
   const fetchMessage = useCallback(
-    (seq: number, revision = ""): Promise<unknown> => {
+    (seq: number): Promise<unknown> => {
       const cache = messagesRef.current;
-      const key = `${seq}\n${revision}`;
+      const key = seq;
       let pending = cache.get(key);
       if (pending !== undefined) {
         cache.delete(key);
@@ -233,7 +257,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
       zIndex: "20",
       overflow: "hidden",
       pointerEvents: "none",
-      display: "none",
+      visibility: "hidden",
     });
     const release = holdPosition(parent);
     // Before the chat, so the bar comes before it in tab order.
@@ -254,66 +278,90 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
     const { signal } = controller;
     const rowPrefix = `${threadId}:`;
     let frame = 0;
+    let lookupInFlight = false;
+
+    // Outline refresh. A user row on screen that the outline lacks asks for
+    // a fetch; so does relying on the last-turn guess after new rows arrived.
+    // At most one fetch per interval, retried with backoff while BB still
+    // leaves a row out.
     let lastOutlineFetch = 0;
     let outlineInFlight = false;
-    let outlineAgain = false;
     let outlineTimer = 0;
-    const outlineAskedFor = new Set<string>();
-    const outlineMisses = new Map<string, number>();
-    let lookupInFlight = false;
+    let refreshForGuess = false;
+    let lastRowId: string | null = null;
+    let lastRowAtFetch: string | null = null;
+    const wanted = new Set<string>();
+    const misses = new Map<string, { count: number; retryAt: number }>();
 
     const schedule = () => {
       if (frame === 0 && !signal.aborted) frame = requestAnimationFrame(run);
     };
     scheduleRef.current = schedule;
 
+    // visibility, not display: the bar keeps its size while hidden, so the
+    // push-out is measured right the moment it shows.
     const hide = () => {
-      hostEl.style.display = "none";
+      hostEl.style.visibility = "hidden";
+    };
+
+    const due = (now: number) =>
+      refreshForGuess ||
+      [...wanted].some((id) => (misses.get(id)?.retryAt ?? 0) <= now);
+
+    const missed = (id: string, now: number) => {
+      const count = (misses.get(id)?.count ?? 0) + 1;
+      misses.set(id, { count, retryAt: now + Math.min(60_000, OUTLINE_REFRESH_MS * 2 ** count) });
     };
 
     const fetchOutline = async () => {
       outlineInFlight = true;
       lastOutlineFetch = Date.now();
-      const askedFor = [...outlineAskedFor];
-      outlineAskedFor.clear();
+      refreshForGuess = false;
+      const rowAtFetch = lastRowId;
       try {
         const result = await sdk.threads.conversationOutline({ threadId, role: "user", signal });
         const items = result.items.filter((item) => item.role === "user");
         itemsRef.current = items;
         outlineRef.current = makeOutline(items.map((item) => item.id));
-        for (const id of askedFor) {
-          if (!outlineRef.current.indexById.has(id)) {
-            outlineMisses.set(id, (outlineMisses.get(id) ?? 0) + 1);
+        lastRowAtFetch = rowAtFetch;
+        const now = Date.now();
+        for (const id of [...wanted]) {
+          if (outlineRef.current.indexById.has(id)) {
+            wanted.delete(id);
+            misses.delete(id);
+          } else {
+            missed(id, now);
           }
         }
       } catch (error) {
-        if (!signal.aborted) console.warn("[sticky-prompt] could not read the outline", error);
+        if (signal.aborted) return;
+        const now = Date.now();
+        for (const id of wanted) missed(id, now);
+        console.warn("[sticky-prompt] could not read the outline", error);
       } finally {
         outlineInFlight = false;
-        if (outlineAgain) {
-          outlineAgain = false;
-          requestOutline();
+        if (!signal.aborted) {
+          if (wanted.size > 0 || refreshForGuess) requestOutline();
+          schedule();
         }
-        schedule();
       }
     };
 
-    // At most one fetch per interval, and always one more after a change
-    // that arrived while waiting, so a new message is never left out.
     function requestOutline() {
-      if (signal.aborted) return;
-      if (outlineInFlight) {
-        outlineAgain = true;
-        return;
-      }
-      const wait = lastOutlineFetch + OUTLINE_REFRESH_MS - Date.now();
-      if (wait > 0) {
-        if (outlineTimer === 0) {
-          outlineTimer = window.setTimeout(() => {
-            outlineTimer = 0;
-            requestOutline();
-          }, wait);
-        }
+      if (signal.aborted || outlineInFlight || outlineTimer !== 0) return;
+      const now = Date.now();
+      const backoff = [...wanted].reduce(
+        (soonest, id) => Math.min(soonest, misses.get(id)?.retryAt ?? now),
+        refreshForGuess ? now : Number.POSITIVE_INFINITY,
+      );
+      if (!Number.isFinite(backoff)) return;
+      const at = Math.max(lastOutlineFetch + OUTLINE_REFRESH_MS, backoff);
+      if (at > now) {
+        outlineTimer = window.setTimeout(() => {
+          outlineTimer = 0;
+          if (due(Date.now())) void fetchOutline();
+          else requestOutline();
+        }, at - now);
         return;
       }
       void fetchOutline();
@@ -324,11 +372,11 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
       lookupInFlight = true;
       try {
         const who = await findSender(fetchMessage, id);
-        if (who === undefined) unresolvedRef.current.add(id);
+        if (who === undefined) remember(unresolvedRef.current, id);
         else setInitiator(threadId, id, who, false);
       } catch (error) {
         if (signal.aborted) return;
-        unresolvedRef.current.add(id);
+        remember(unresolvedRef.current, id);
         console.warn("[sticky-prompt] could not read message senders", error);
       } finally {
         lookupInFlight = false;
@@ -344,10 +392,10 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
       const outline = outlineRef.current;
       const items = itemsRef.current;
 
-      // Rows of another thread mean the pane has switched and this bar is
-      // about to go; never pin across threads.
       const entries: Entry[] = [];
+      let own = 0;
       let foreign = 0;
+      lastRowId = null;
       for (const node of list.querySelectorAll<HTMLElement>(
         "[data-timeline-row-id], [data-timeline-window-spacer]",
       )) {
@@ -361,25 +409,38 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
           foreign += 1;
           continue;
         }
-        if (
-          !outline.indexById.has(id) &&
-          getInitiator(threadId, id) !== undefined &&
-          (outlineMisses.get(id) ?? 0) < MAX_OUTLINE_MISSES
-        ) {
-          outlineAskedFor.add(id);
+        own += 1;
+        lastRowId = id;
+        // A user message the outline does not have yet: ask for it, and let
+        // it end the turn above rather than lend its reply to that turn.
+        if (USER_ROW.test(id) && !outline.indexById.has(id)) {
+          wanted.add(id);
+          entries.push({ kind: "spacer" });
+          continue;
         }
         const rect = node.getBoundingClientRect();
         entries.push({ kind: "row", id, top: rect.top, bottom: rect.bottom });
       }
-      if (outlineAskedFor.size > 0) requestOutline();
-      if (foreign > 0 || outline.ids.length === 0) return hide();
+      if (due(Date.now())) requestOutline();
+      // Only another thread's rows: the pane has switched and this bar is
+      // about to go. Never pin across threads.
+      if ((own === 0 && foreign > 0) || outline.ids.length === 0) return hide();
 
+      // Lay the bar out before measuring it, even while hidden.
+      const parent = hostEl.parentElement;
+      if (parent === null) return hide();
       const areaRect = scrollEl.getBoundingClientRect();
+      const parentRect = parent.getBoundingClientRect();
+      const listRect = list.getBoundingClientRect();
+      hostEl.style.top = `${areaRect.top - parentRect.top}px`;
+      hostEl.style.left = `${listRect.left - parentRect.left}px`;
+      hostEl.style.width = `${listRect.width}px`;
+
       const result = pick({
         entries,
         outline,
         areaTop: areaRect.top,
-        barHeight: stripRef.current?.offsetHeight || 56,
+        barHeight: stripRef.current?.offsetHeight || DEFAULT_BAR_HEIGHT,
         areaHeight: scrollEl.clientHeight,
         owners: ownersRef.current,
         eligible: (index) => {
@@ -391,12 +452,20 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
           return unresolvedRef.current.has(item.id) ? true : "unknown";
         },
       });
+      bound(ownersRef.current, MAX_OWNERS);
       if (result.kind === "unknown") {
         const id = outline.ids[result.index];
         if (id !== undefined) void lookupSender(id);
         return hide();
       }
       if (result.kind === "none") return hide();
+      // The last-turn guess trusts the outline to end where the thread does;
+      // after new rows, check before pinning on it.
+      if (result.fallback === true && lastRowId !== lastRowAtFetch) {
+        refreshForGuess = true;
+        requestOutline();
+        return hide();
+      }
       const item = items[result.index];
       if (item === undefined) return hide();
 
@@ -413,18 +482,10 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
         });
         return;
       }
-
-      const parent = hostEl.parentElement;
-      if (parent === null) return hide();
-      const parentRect = parent.getBoundingClientRect();
-      const listRect = list.getBoundingClientRect();
-      hostEl.style.top = `${areaRect.top - parentRect.top}px`;
-      hostEl.style.left = `${listRect.left - parentRect.left}px`;
-      hostEl.style.width = `${listRect.width}px`;
-      hostEl.style.display = "block";
       if (stripRef.current !== null) {
         stripRef.current.style.transform = `translateY(${-result.push}px)`;
       }
+      hostEl.style.visibility = "visible";
     }
 
     // A user scrolling or typing takes over from a jump in progress.
@@ -434,6 +495,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
     scrollEl.addEventListener("scroll", schedule, { passive: true });
     scrollEl.addEventListener("wheel", stopJump, { passive: true });
     scrollEl.addEventListener("touchstart", stopJump, { passive: true });
+    scrollEl.addEventListener("pointerdown", stopJump, { passive: true });
     scrollEl.addEventListener("keydown", stopJump);
     const resizes = new ResizeObserver(schedule);
     resizes.observe(scrollEl);
@@ -451,6 +513,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
       scrollEl.removeEventListener("scroll", schedule);
       scrollEl.removeEventListener("wheel", stopJump);
       scrollEl.removeEventListener("touchstart", stopJump);
+      scrollEl.removeEventListener("pointerdown", stopJump);
       scrollEl.removeEventListener("keydown", stopJump);
       resizes.disconnect();
       mutations.disconnect();
@@ -460,7 +523,6 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
   }, [host, scrollEl, sdk, threadId, fetchMessage]);
 
   const shownId = shown?.id;
-  const shownLabel = shown?.label ?? "";
   const imageCount = shown?.imageCount ?? 0;
   useEffect(() => {
     if (shownId === undefined) return;
@@ -471,7 +533,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
       // The full text, rendered by BB's own Markdown component. Until it
       // arrives, or if BB answers with another row, the bar keeps the
       // outline's plain preview.
-      const row = userRowOf(await fetchMessage(seq, shownLabel), shownId);
+      const row = userRowOf(await fetchMessage(seq), shownId);
       if (cancelled || row === null) return;
       if (row.text.trim() !== "") setSource({ id: shownId, markdown: barMarkdown(row.text) });
       if (imageCount === 0) return;
@@ -511,7 +573,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
     return () => {
       cancelled = true;
     };
-  }, [shownId, shownLabel, imageCount, fetchMessage, sdk, threadId]);
+  }, [shownId, imageCount, fetchMessage, sdk, threadId]);
 
   useEffect(() => {
     scheduleRef.current();
@@ -529,15 +591,17 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
     void jumpTo(scrollEl, shown.id, controller.signal);
   };
   // The bar sits outside the chat's scroll container, so pass scrolling on.
-  const onWheel = (event: WheelEvent) => {
+  const onWheel = (event: ReactWheelEvent) => {
+    // Ctrl or pinch is the page zooming, not the chat scrolling.
+    if (event.ctrlKey) return;
     jumpRef.current?.abort();
     scrollChat(scrollEl, scrollEl.scrollTop + wheelPixels(event, scrollEl));
   };
-  const onTouchStart = (event: TouchEvent) => {
+  const onTouchStart = (event: ReactTouchEvent) => {
     jumpRef.current?.abort();
     touchRef.current = event.touches[0]?.clientY ?? null;
   };
-  const onTouchMove = (event: TouchEvent) => {
+  const onTouchMove = (event: ReactTouchEvent) => {
     const y = event.touches[0]?.clientY;
     if (y === undefined || touchRef.current === null) return;
     scrollChat(scrollEl, scrollEl.scrollTop + touchRef.current - y);
@@ -561,7 +625,6 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
         data-sticky-prompt-bar=""
         role="button"
         tabIndex={0}
-        title={shown.label}
         aria-label={`Scroll to the pinned message: ${shown.label}`}
         onClick={(event) => {
           // A pointer click leaves no focus behind; keyboard focus stays.
@@ -569,6 +632,10 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
           jump();
         }}
         onKeyDown={(event) => {
+          if (TAKEOVER_KEYS.has(event.key)) {
+            jumpRef.current?.abort();
+            return;
+          }
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
           jump();

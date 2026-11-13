@@ -90,6 +90,9 @@ describe("bar markdown", () => {
 
   it("shows images as their alt text and escapes directive lines", () => {
     expect(barMarkdown("See ![the chart](https://example.com/c.png) here")).toBe("See the chart here");
+    expect(barMarkdown("![chart][plot] and ![logo][] and ![icon]\n\n[plot]: https://example.com/p.png")).toBe(
+      "chart and logo and icon\n\n[plot]: https://example.com/p.png",
+    );
     expect(barMarkdown("::inline-vis{file=\"a.html\"}\ntext")).toBe("\\::inline-vis{file=\"a.html\"}\ntext");
   });
 });

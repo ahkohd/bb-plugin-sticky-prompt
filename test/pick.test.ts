@@ -112,11 +112,12 @@ describe("pick", () => {
     });
   });
 
-  it("falls back to the newest message inside the last turn", () => {
+  it("falls back to the newest message inside the last turn, and says so", () => {
     expect(run([spacer, row("x", -20, 300), row("last", 280)], ["u0", "u1"])).toEqual({
       kind: "show",
       index: 1,
       push: 0,
+      fallback: true,
     });
   });
 

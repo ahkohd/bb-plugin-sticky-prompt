@@ -72,8 +72,9 @@ export function withoutSenderPrefix(text: string): string {
 
 /**
  * The start of a message as Markdown for the two-line bar: cut long text at a
- * line break, turn code blocks into inline code, show images as their alt
- * text, and escape directive lines so nothing embeds or loads from the bar.
+ * line break, turn code blocks into inline code, show every image (inline,
+ * reference or shortcut) as its alt text, and escape directive lines so
+ * nothing embeds or loads from the bar.
  */
 export function barMarkdown(text: string, max = MAX_SOURCE): string {
   let source = withoutSenderPrefix(text).trim();
@@ -82,6 +83,6 @@ export function barMarkdown(text: string, max = MAX_SOURCE): string {
     source = source.slice(0, cut > max / 2 ? cut : max).trimEnd();
   }
   return inlineFences(source)
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/!\[([^\]]*)\](\([^)]*\)|\[[^\]]*\])?/g, "$1")
     .replace(/^(\s*):/gm, "$1\\:");
 }

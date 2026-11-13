@@ -43,7 +43,13 @@ export interface PickInput {
 export type PickResult =
   | { kind: "none" }
   | { kind: "unknown"; index: number }
-  | { kind: "show"; index: number; push: number };
+  | {
+      kind: "show";
+      index: number;
+      push: number;
+      /** Chosen by the last-turn guess rather than by a row on screen. */
+      fallback?: true;
+    };
 
 const NONE: PickResult = { kind: "none" };
 
@@ -108,6 +114,7 @@ export function pick(input: PickInput): PickResult {
   } else {
     candidate = owner[topIndex];
   }
+  let fallback = false;
   if (candidate === undefined) {
     // Nothing known about this row. If no spacer and no user message follows
     // it, it is in the last turn: BB always keeps the newest row mounted.
@@ -117,6 +124,7 @@ export function pick(input: PickInput): PickResult {
     );
     if (!contiguousToEnd) return NONE;
     candidate = outlineIds.length - 1;
+    fallback = true;
   }
 
   let chosen = candidate;
@@ -160,5 +168,5 @@ export function pick(input: PickInput): PickResult {
 
   const push =
     next === undefined ? 0 : Math.min(barHeight, Math.max(0, areaTop + barHeight - next.top));
-  return { kind: "show", index: chosen, push };
+  return fallback ? { kind: "show", index: chosen, push, fallback } : { kind: "show", index: chosen, push };
 }
