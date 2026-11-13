@@ -15,8 +15,8 @@ The same demo as a video: [docs/demo.mp4](docs/demo.mp4).
 
 - As soon as your message reaches the top of the chat, a full-width copy of
   it, cut to two lines, stays pinned there.
-- As your next message comes up to the top, it pushes the pinned one away
-  and takes its place.
+- The bar fades in as your message slides behind it, and fades out as your
+  next message comes up and pushes it away, so the hand-off never jumps.
 - A turn that fits on screen is not pinned: you can already see your
   message and the end of the reply together.
 - The text is drawn by BB's own Markdown component, so code, bold and links

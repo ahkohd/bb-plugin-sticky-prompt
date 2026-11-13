@@ -38,14 +38,6 @@ export default async function plugin(bb: BbPluginApi) {
         "Messages from other threads, agents and BB system notices are pinned as well as yours.",
       default: false,
     },
-    motion: {
-      type: "select",
-      label: "Motion (experimental)",
-      description:
-        "Follow: the bar fades with your scroll. Fade: short timed fades. Off: it switches at once.",
-      options: ["follow", "fade", "off"],
-      default: "follow",
-    },
   });
 
   async function senders(threadId: string, last: number): Promise<string[]> {

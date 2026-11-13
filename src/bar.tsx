@@ -33,12 +33,6 @@ interface Shown {
   markdown: string | null;
 }
 
-/**
- * How the bar appears, changes and goes. Experimental: "follow" ties its
- * opacity to the scroll, "fade" uses short timed fades, "off" switches at
- * once as before.
- */
-export type Motion = "follow" | "fade" | "off";
 
 const OUTLINE_REFRESH_MS = 1500;
 const MAX_CACHED_MESSAGES = 40;
@@ -222,15 +216,7 @@ function holdPosition(parent: HTMLElement): () => void {
   };
 }
 
-export function StickyBar({
-  area,
-  includeOthers,
-  motion,
-}: {
-  area: Area;
-  includeOthers: boolean;
-  motion: Motion;
-}) {
+export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean }) {
   const sdk = useSdk();
   const { scrollEl, threadId } = area;
   const [host, setHost] = useState<HTMLDivElement | null>(null);
@@ -248,9 +234,6 @@ export function StickyBar({
   const unresolvedRef = useRef(new Set<string>());
   const includeRef = useRef(includeOthers);
   includeRef.current = includeOthers;
-  const motionRef = useRef(motion);
-  motionRef.current = motion;
-  const contentRef = useRef<HTMLDivElement | null>(null);
   const scheduleRef = useRef<() => void>(() => {});
   const jumpRef = useRef<AbortController | null>(null);
   const touchRef = useRef<number | null>(null);
@@ -339,7 +322,7 @@ export function StickyBar({
 
     // visibility, not display: the bar keeps its size while hidden, so the
     // push-out is measured right the moment it shows. Opacity, on the strip,
-    // carries the motion; visibility follows once a fade-out has finished.
+    // follows the scroll; visibility follows once a fade-out has finished.
     let visible = false;
     let hideTimer = 0;
     const setOpacity = (value: number, ms: number) => {
@@ -349,7 +332,7 @@ export function StickyBar({
       strip.style.opacity = String(value);
     };
     const hide = () => {
-      if (!visible || motionRef.current === "off") {
+      if (!visible) {
         visible = false;
         window.clearTimeout(hideTimer);
         hostEl.style.visibility = "hidden";
@@ -362,16 +345,8 @@ export function StickyBar({
         if (!visible) hostEl.style.visibility = "hidden";
       }, EXIT_MS);
     };
-    const show = (opacity: number) => {
+    const show = (target: number) => {
       window.clearTimeout(hideTimer);
-      const mode = motionRef.current;
-      if (mode === "off") {
-        visible = true;
-        setOpacity(1, 0);
-        hostEl.style.visibility = "visible";
-        return;
-      }
-      const target = mode === "follow" ? opacity : 1;
       if (!visible) {
         // Entering for a reason other than scrolling (a thread opened mid
         // reply, a setting changed): fade from wherever the strip is now.
@@ -382,7 +357,7 @@ export function StickyBar({
         setOpacity(target, ENTER_MS);
         return;
       }
-      if (mode === "follow") setOpacity(target, 0);
+      setOpacity(target, 0);
     };
 
     // Messages are prepared (their Markdown read) before the bar switches to
@@ -539,17 +514,15 @@ export function StickyBar({
         }
         entries.push({ kind: "row", id, top: rect.top, bottom: rect.bottom });
       }
-      if (motionRef.current !== "off") {
-        let fetched = 0;
-        for (const entry of entries) {
-          if (fetched >= MAX_PREFETCH) break;
-          if (entry.kind !== "row") continue;
-          const index = outline.indexById.get(entry.id);
-          const candidate = index === undefined ? undefined : items[index];
-          if (candidate === undefined) continue;
-          prepare(candidate);
-          fetched += 1;
-        }
+      let fetched = 0;
+      for (const entry of entries) {
+        if (fetched >= MAX_PREFETCH) break;
+        if (entry.kind !== "row") continue;
+        const index = outline.indexById.get(entry.id);
+        const candidate = index === undefined ? undefined : items[index];
+        if (candidate === undefined) continue;
+        prepare(candidate);
+        fetched += 1;
       }
 
       // No outline yet (the first fetch failed): keep asking, within backoff.
@@ -610,13 +583,12 @@ export function StickyBar({
       const label = labelFor(item);
       const current = shownRef.current;
       if (current?.id !== item.id || current.label !== label) {
-        const mode = motionRef.current;
-        if (mode !== "off" && !prepared.has(item.id)) {
+        if (!prepared.has(item.id)) {
           prepare(item);
-          if (mode === "follow" && visible) hide();
+          if (visible) hide();
           return;
         }
-        if (mode === "off" || current === null) hide();
+        if (current === null) hide();
         setShown({
           id: item.id,
           label,
@@ -629,21 +601,19 @@ export function StickyBar({
       if (stripRef.current !== null) {
         stripRef.current.style.transform = `translateY(${-result.push}px)`;
       }
-      // follow: fade in over the first pixels the message slides under the
-      // top, and out as the next one pushes it away.
+      // Fade in while the message slides behind the bar, and out as the next
+      // one pushes it away.
       let opacity = 1;
-      if (motionRef.current === "follow") {
-        const height = stripRef.current?.offsetHeight || DEFAULT_BAR_HEIGHT;
-        const own = entries.find((entry) => entry.kind === "row" && entry.id === item.id);
-        if (own?.kind === "row") {
-          const travel = Math.min(
-            FOLLOW_MAX_PX,
-            Math.max(FOLLOW_MIN_PX, own.bottom - own.top - height),
-          );
-          opacity = Math.min(1, Math.max(0, (areaRect.top - own.top) / travel));
-        }
-        opacity *= 1 - result.push / height;
+      const height = stripRef.current?.offsetHeight || DEFAULT_BAR_HEIGHT;
+      const pinnedRow = entries.find((entry) => entry.kind === "row" && entry.id === item.id);
+      if (pinnedRow?.kind === "row") {
+        const travel = Math.min(
+          FOLLOW_MAX_PX,
+          Math.max(FOLLOW_MIN_PX, pinnedRow.bottom - pinnedRow.top - height),
+        );
+        opacity = Math.min(1, Math.max(0, (areaRect.top - pinnedRow.top) / travel));
       }
+      opacity *= 1 - result.push / height;
       show(opacity);
     }
 
@@ -737,25 +707,7 @@ export function StickyBar({
 
   useEffect(() => {
     scheduleRef.current();
-  }, [includeOthers, motion, shown, thumbs, source]);
-
-  // fade: a change of message crossfades the content, softened by a blur so
-  // the two texts read as one changing line rather than two overlapping.
-  const previousShownRef = useRef<string | null>(null);
-  useLayoutEffect(() => {
-    const id = shown?.id ?? null;
-    const before = previousShownRef.current;
-    previousShownRef.current = id;
-    if (motion !== "fade" || before === null || id === null || before === id) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    contentRef.current?.animate(
-      [
-        { opacity: 0, filter: "blur(2px)" },
-        { opacity: 1, filter: "blur(0)" },
-      ],
-      { duration: ENTER_MS, easing: EASE_OUT },
-    );
-  }, [shown?.id, motion]);
+  }, [includeOthers, shown, thumbs, source]);
 
   if (host === null || shown === null) return null;
   const shownThumbs = thumbs?.id === shown.id ? thumbs : null;
@@ -763,7 +715,7 @@ export function StickyBar({
   const markdown = shown.markdown ?? (source?.id === shown.id ? source.markdown : null);
   // Hold the thumbnails' place while they load, so the bar does not grow.
   const placeholders =
-    motion !== "off" && shown.imageCount > 0 && shownThumbs === null
+    shown.imageCount > 0 && shownThumbs === null
       ? Math.min(MAX_THUMBS, shown.imageCount)
       : 0;
 
@@ -805,7 +757,6 @@ export function StickyBar({
       <style>{FLATTEN_CSS}</style>
       {/* A div, not a button: the Markdown inside may contain links. */}
       <div
-        ref={contentRef}
         data-sticky-prompt-bar=""
         role="button"
         tabIndex={0}
