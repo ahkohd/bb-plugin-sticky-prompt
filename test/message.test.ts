@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { barMarkdown, userRowOf, withoutSenderPrefix } from "../src/message";
+import { barMarkdown, barParts, mentionTarget, userRowOf, withoutSenderPrefix } from "../src/message";
 import { findSender, senderFromPreview, seqFromId } from "../src/senders";
 import { imageSourcesOf } from "../src/thumbs";
 
@@ -11,7 +11,7 @@ describe("message rows", () => {
       answer({ role: "user", id: "t:user-seed:4", text: "Run `bb`", initiator: "agent", attachments: null }),
       "t:user-seed:4",
     );
-    expect(row).toEqual({ id: "t:user-seed:4", text: "Run `bb`", initiator: "agent", attachments: null });
+    expect(row).toEqual({ id: "t:user-seed:4", text: "Run `bb`", initiator: "agent", attachments: null, mentions: [] });
   });
 
   it("ignores a row that is not the message asked for", () => {
@@ -110,5 +110,62 @@ describe("sender prefixes", () => {
     expect(withoutSenderPrefix("[bb message from thread:thr_ab12] please check")).toBe("@thread:thr_ab12 please check");
     expect(withoutSenderPrefix("[bb system] @thread:thr_x completed")).toBe("@thread:thr_x completed");
     expect(withoutSenderPrefix("I wrote [bb system] myself")).toBe("I wrote [bb system] myself");
+  });
+});
+
+describe("mentions", () => {
+  const comment = {
+    kind: "plugin",
+    pluginId: "inline-comments",
+    icon: null,
+    itemId: "comment:1",
+    label: "Option B, ask macOS to leave it ou\u2026",
+  };
+
+  it("reads a message's mentions, sorted, and drops malformed ones", () => {
+    const row = userRowOf(
+      {
+        message: {
+          role: "user",
+          id: "t:user-seed:9",
+          text: "x",
+          mentions: [
+            { start: 5, end: 9, resource: { kind: "thread", threadId: "thr_b", label: "B" } },
+            { start: 0, end: 4, resource: comment },
+            { start: 3, end: 3, resource: comment },
+            { start: 1, end: 2 },
+          ],
+        },
+      },
+      "t:user-seed:9",
+    );
+    expect(row?.mentions.map((m) => m.start)).toEqual([0, 5]);
+  });
+
+  it("splits the text at mentions and keeps the text around them", () => {
+    const text = "@Option B, ask macOS to leave it ou\u2026 and check **this**";
+    const end = text.indexOf(" and");
+    expect(barParts(text, [{ start: 0, end, resource: comment }])).toEqual([
+      { kind: "mention", label: comment.label, resource: comment },
+      { kind: "text", markdown: " and check **this**" },
+    ]);
+  });
+
+  it("is a single text part without mentions", () => {
+    expect(barParts("  Run `bb`  ", [])).toEqual([{ kind: "text", markdown: "Run `bb`" }]);
+  });
+
+  it("maps a stored plugin mention to the composer's shape", () => {
+    expect(mentionTarget({ kind: "mention", label: "L", resource: comment })).toEqual({
+      kind: "plugin",
+      pluginId: "inline-comments",
+      provider: "",
+      id: "comment:1",
+      label: "L",
+      icon: null,
+    });
+    expect(
+      mentionTarget({ kind: "mention", label: "B", resource: { kind: "thread", threadId: "thr_b" } }),
+    ).toEqual({ kind: "thread", threadId: "thr_b", label: "B" });
   });
 });

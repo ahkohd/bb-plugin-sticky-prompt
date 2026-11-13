@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from "react";
 import { createPortal } from "react-dom";
-import { Markdown, useSdk } from "@get-bb/plugin-sdk/app";
+import {
+  Markdown,
+  experimental_PromptMentionIcon as PromptMentionIcon,
+  experimental_describePromptMention as describePromptMention,
+  useSdk,
+  type ExperimentalComposerMentionTarget,
+} from "@get-bb/plugin-sdk/app";
 import {
   getInitiator,
   rowSelector,
@@ -16,7 +22,7 @@ import {
 import { makeOutline, pick, type Entry, type Outline } from "./pick";
 import { findSender, senderFromPreview, seqFromId } from "./senders";
 import { cachedBlobUrl, imageSourcesOf } from "./thumbs";
-import { barMarkdown, userRowOf, withoutSenderPrefix } from "./message";
+import { barParts, mentionTarget, userRowOf, withoutSenderPrefix, type BarPart } from "./message";
 
 interface OutlineItem {
   id: string;
@@ -29,8 +35,8 @@ interface Shown {
   label: string;
   imageCount: number;
   hasText: boolean;
-  /** The message as bar Markdown, prepared before it is shown; null: none. */
-  markdown: string | null;
+  /** The message as bar parts, prepared before it is shown; null: none. */
+  content: BarPart[] | null;
 }
 
 
@@ -77,7 +83,8 @@ ${T} :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, li, pre, div, section, f
 ${T} :is(p, h1, h2, h3, h4, h5, h6, li, pre, blockquote)::after { content: " "; }
 ${T} li::before, ${T} li::marker { content: none; }
 ${T} pre, ${T} pre code { white-space: normal; }
-${T} :is(button, img, video, iframe, table, hr, input) { display: none; }
+${T} :is(button, video, iframe, table, hr, input) { display: none; }
+${T} img:not([data-sticky-prompt-chip] img) { display: none; }
 ${T} div:has(> table), ${T} div:has(> div > table) { display: none; }
 [data-sticky-prompt-bar]:focus { outline: none; }
 [data-sticky-prompt-bar]:focus-visible {
@@ -216,13 +223,63 @@ function holdPosition(parent: HTMLElement): () => void {
   };
 }
 
+/** A mention drawn the way BB draws it in the bubble, or as a plain pill. */
+function MentionChip({ part }: { part: Extract<BarPart, { kind: "mention" }> }) {
+  const target = mentionTarget(part) as ExperimentalComposerMentionTarget;
+  let className = "";
+  let title = part.label;
+  let known = false;
+  try {
+    const presentation = describePromptMention(target);
+    className = presentation.className;
+    title = presentation.title || part.label;
+    known = true;
+  } catch {
+    // An unknown kind of mention: keep the plain pill.
+  }
+  return (
+    <span
+      data-sticky-prompt-chip=""
+      className={className}
+      title={title}
+      style={
+        known
+          ? { margin: "0 0.2em", verticalAlign: "baseline" }
+          : {
+              margin: "0 0.2em",
+              padding: "0 0.4em",
+              borderRadius: "999px",
+              border: "1px solid var(--border-seam)",
+            }
+      }
+    >
+      {known ? <PromptMentionIcon mention={target} /> : null}
+      {part.label}
+    </span>
+  );
+}
+
+function BarContent({ parts }: { parts: readonly BarPart[] }) {
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.kind === "text" ? (
+          <Markdown key={index} content={part.markdown} />
+        ) : (
+          <MentionChip key={index} part={part} />
+        ),
+      )}
+    </>
+  );
+}
+
 export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean }) {
   const sdk = useSdk();
   const { scrollEl, threadId } = area;
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [thumbs, setThumbs] = useState<{ id: string; srcs: string[]; more: number } | null>(null);
-  const [source, setSource] = useState<{ id: string; markdown: string } | null>(null);
+  const [source, setSource] = useState<{ id: string; content: BarPart[] } | null>(null);
   const shownRef = useRef<Shown | null>(null);
   shownRef.current = shown;
   const messagesRef = useRef(new Map<number, Promise<unknown>>());
@@ -363,15 +420,15 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
     // Messages are prepared (their Markdown read) before the bar switches to
     // them, so the text never reflows from the plain preview. Mounted user
     // messages are prepared ahead, so a switch rarely waits.
-    const prepared = new Map<string, string | null>();
+    const prepared = new Map<string, BarPart[] | null>();
     const preparing = new Set<string>();
     const prepare = (item: OutlineItem) => {
       if (prepared.has(item.id) || preparing.has(item.id)) return;
       preparing.add(item.id);
-      const settle = (markdown: string | null) => {
+      const settle = (content: BarPart[] | null) => {
         const first = preparing.delete(item.id);
-        if (!first && markdown === null) return;
-        prepared.set(item.id, markdown);
+        if (!first && content === null) return;
+        prepared.set(item.id, content);
         bound(prepared, MAX_PREPARED);
         schedule();
       };
@@ -385,7 +442,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
         (response) => {
           window.clearTimeout(timer);
           const row = userRowOf(response, item.id);
-          settle(row !== null && row.text.trim() !== "" ? barMarkdown(row.text) : null);
+          settle(row !== null && row.text.trim() !== "" ? barParts(row.text, row.mentions) : null);
         },
         () => {
           window.clearTimeout(timer);
@@ -594,7 +651,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
           label,
           imageCount: item.attachmentSummary?.imageCount ?? 0,
           hasText: item.preview.trim() !== "",
-          markdown: prepared.get(item.id) ?? null,
+          content: prepared.get(item.id) ?? null,
         });
         return;
       }
@@ -665,7 +722,9 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
       // outline's plain preview.
       const row = userRowOf(await fetchMessage(seq), shownId);
       if (cancelled || row === null) return;
-      if (row.text.trim() !== "") setSource({ id: shownId, markdown: barMarkdown(row.text) });
+      if (row.text.trim() !== "") {
+        setSource({ id: shownId, content: barParts(row.text, row.mentions) });
+      }
       if (imageCount === 0) return;
       const sources = imageSourcesOf(row.attachments);
       const first = sources.slice(0, MAX_THUMBS);
@@ -712,7 +771,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
   if (host === null || shown === null) return null;
   const shownThumbs = thumbs?.id === shown.id ? thumbs : null;
   const showLabel = shown.hasText || shownThumbs === null || shownThumbs.srcs.length === 0;
-  const markdown = shown.markdown ?? (source?.id === shown.id ? source.markdown : null);
+  const content = shown.content ?? (source?.id === shown.id ? source.content : null);
   // Hold the thumbnails' place while they load, so the bar does not grow.
   const placeholders =
     shown.imageCount > 0 && shownThumbs === null
@@ -867,7 +926,7 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
               overflowWrap: "anywhere",
             }}
           >
-            {markdown === null ? shown.label : <Markdown content={markdown} />}
+            {content === null ? shown.label : <BarContent parts={content} />}
           </div>
         ) : null}
       </div>
