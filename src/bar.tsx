@@ -89,7 +89,8 @@ function labelFor(item: OutlineItem): string {
  */
 function scrollChat(scrollEl: HTMLElement, top: number): void {
   scrollEl.dispatchEvent(new WheelEvent("wheel", { deltaY: 0 }));
-  scrollEl.scrollTop = top;
+  // "instant" overrides a smooth scroll-behavior set on the chat in CSS.
+  scrollEl.scrollTo({ top, behavior: "instant" });
 }
 
 function nextFrame(): Promise<void> {
