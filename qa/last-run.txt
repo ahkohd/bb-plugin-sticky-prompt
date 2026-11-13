@@ -1,0 +1,23 @@
+PASS S12b after a jump the previous bar no longer covers the message | {"visibility": "visible", "stripBottom": 11, "rowTop": 12, "title": null}
+PASS S25 no raw Markdown tooltip | null
+PASS S13 jump to a message BB had unloaded | {"unmounted": true, "text": "Walk through the tools again in detail", "g": {"st": 17769, "rowTop": 12}, "g2": {"st": 177
+PASS S9 agent message skipped by default | "One last huge question to finish the thread"
+PASS S10 BB system notice skipped | "Message from the release notes thread: please confirm the queue cut-over date"
+FAIL S12 click from the bottom brings the message to the top and it stays | {"g1": {"st": 25359, "rowTop": null}, "g2": {"st": 25359, "rowTop": null}}
+PASS S11 wheel over the bar scrolls the chat | {"before": 15280, "after": 15680}
+PASS S13 jump to the tool turn's message | {"pinned": "Walk through the code with tools please", "mountedBefore": false, "g1": {"st": 4124, "rowTop": 12}}
+PASS S14 Enter on the focused bar jumps; links are not focusable | {"ring": {"focused": true, "outline": "none", "offset": "0px"}, "g1": {"st": 1873, "rowTop": 12}}
+PASS S23 wheel during a jump stops it | {"startSt": 4572, "endSt": 4324, "at82": -188}
+FAIL S1 newest message pinned at the bottom | "slow: summarise the rollout risks for the billing queue in pg-boss"
+PASS S2 pins as its top reaches the top, with BB Markdown | {"text": "I need a careful plan for moving our billing service to the new queue, and I want you to read all of this befo
+PASS S3 short first turn is not pinned | {"visible": false, "text": "I need a careful plan for moving our billing service to the new queue, and I want you to rea
+PASS S4 next message pushes the bar up | "translateY(-54.25px)"
+PASS S7 table hidden, code block inline | {"text": "Compare these options and fill in anything I missed:\nOptionCostOps workpg-bossnonelowBullMQRedismedium\nconst
+PASS S6 one image shows one thumbnail | {"visible": true, "text": "Here is a screenshot of the dashboard, what stands out?", "thumbs": 1, "transform": "translat
+PASS S5 four images show three thumbnails and +1 | {"visible": true, "text": "Four more screenshots from the incident, compare them", "thumbs": 3, "transform": "translateY
+PASS S8 emoji, CJK and RTL text render | "Can you check these strings render well? 🚀 café, naïve, 日本語のテキスト, 中文字符, and العربية من اليمين إلى اليسار. Also a very l
+FAIL S9 agent message skipped by default | "Thanks, so what changes in the plan now that the date moved? huge answer please"
+PASS S10 BB system notice skipped | "One last huge question to finish the thread"
+PASS S1 newest message pinned at the bottom | {"panes": 1, "id": "thr_w3q5j4ac75:user-seed:354", "text": "slow: summarise the rollout risks for the billing queue in pg-boss"}
+PASS S12 click from the bottom brings the message to the top and it stays | {"g1": {"rowTop": 12}, "g2": {"rowTop": 12}}
+PASS S15 switching threads never shows the other thread's message | {"onB": {"url": "/projects/proj_uqmgqxvk48/threads/thr_bkadmvcu6m", "panes": 1, "bars": 0}, "back": "slow: explain the risks a third time"}

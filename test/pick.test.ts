@@ -8,7 +8,7 @@ const row = (id: string, top: number, height = 100): Entry => ({
   bottom: top + height,
 });
 const spacer: Entry = { kind: "spacer" };
-const unlisted = (top: number, height = 60): Entry => ({ kind: "break", top, bottom: top + height });
+const unlisted = (top: number, height = 60, id = "u2"): Entry => ({ kind: "break", id, top, bottom: top + height });
 const all = (): Eligibility => true;
 
 function run(
@@ -161,6 +161,29 @@ describe("pick", () => {
     });
     // And it rules out the last-turn guess.
     expect(run([spacer, row("x", -20, 300), unlisted(280)], outline)).toEqual({ kind: "none" });
+  });
+
+  it("remembers rows under an unlisted message after BB unloads it", () => {
+    const owners = new Map<string, string | null>();
+    const outline = ["u0", "u1"];
+    run([row("u1", -900, 60), row("a1", -840, 600), unlisted(-240), row("a2", -180, 600)], outline, all, owners);
+    expect(owners.get("a2")).toBe("u2");
+    // u2 unloaded: its reply must not be credited to u1 by the last-turn guess.
+    expect(run([spacer, row("a2", -100, 900)], outline, all, owners)).toEqual({ kind: "none" });
+    // Once the outline lists u2, the remembered owner resolves.
+    expect(run([spacer, row("a2", -100, 900)], ["u0", "u1", "u2"], all, owners)).toEqual({
+      kind: "show",
+      index: 2,
+      push: 0,
+    });
+  });
+
+  it("keeps the previous bar, pushed, while an unlisted message comes up", () => {
+    expect(run([row("u1", -500, 60), row("a1", -440, 440), unlisted(5)], ["u0", "u1"])).toEqual({
+      kind: "show",
+      index: 1,
+      push: 45,
+    });
   });
 
   it("asks for the sender when it is not known", () => {

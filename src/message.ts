@@ -82,9 +82,10 @@ export function barMarkdown(text: string, max = MAX_SOURCE): string {
     const cut = source.lastIndexOf("\n", max);
     source = source.slice(0, cut > max / 2 ? cut : max).trimEnd();
   }
-  // Repeat: an image in another image's alt text leaves an image behind.
+  // Repeat until nothing changes: an image in another image's alt text
+  // leaves an image behind. Each pass shortens the text, so this ends.
   let out = inlineFences(source);
-  for (let pass = 0; pass < 8; pass++) {
+  for (;;) {
     const next = out.replace(/!\[([^\]]*)\](\([^)]*\)|\[[^\]]*\])?/g, "$1");
     if (next === out) break;
     out = next;

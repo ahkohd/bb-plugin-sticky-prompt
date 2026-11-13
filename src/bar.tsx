@@ -422,11 +422,13 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
         // it end the turn above rather than lend its reply to that turn.
         if (USER_ROW.test(id) && !outline.indexById.has(id)) {
           wanted.add(id);
-          entries.push({ kind: "break", top: rect.top, bottom: rect.bottom });
+          entries.push({ kind: "break", id, top: rect.top, bottom: rect.bottom });
           continue;
         }
         entries.push({ kind: "row", id, top: rect.top, bottom: rect.bottom });
       }
+      // No outline yet (the first fetch failed): keep asking, within backoff.
+      if (outline.ids.length === 0 && own > 0) refreshForGuess = true;
       if (wanted.size > 0 || refreshForGuess) requestOutline();
       // Only another thread's rows: the pane has switched and this bar is
       // about to go. Never pin across threads.
@@ -465,12 +467,16 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
         return hide();
       }
       if (result.kind === "none") return hide();
-      // The last-turn guess trusts the outline to end where the thread does;
-      // after new rows, check before pinning on it.
-      if (result.fallback === true && lastRowId !== lastRowAtFetch) {
-        refreshForGuess = true;
-        requestOutline();
-        return hide();
+      // The last-turn guess trusts the outline to end where the thread does.
+      // Not while a message it does not list is known, and after new rows,
+      // only once it has been checked.
+      if (result.fallback === true) {
+        if (wanted.size > 0) return hide();
+        if (lastRowId !== lastRowAtFetch) {
+          refreshForGuess = true;
+          requestOutline();
+          return hide();
+        }
       }
       const item = items[result.index];
       if (item === undefined) return hide();

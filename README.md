@@ -3,6 +3,12 @@
 A BB plugin that keeps the message you are reading a reply to pinned at the
 top of the chat, as Cursor does. Click the pinned message to scroll back to it.
 
+![A long message pinned above its reply, with bold and inline code](docs/pinned-markdown.png)
+
+![A message with four images pinned as three thumbnails and a count](docs/pinned-images.png)
+
+A 20-second demo is in [docs/demo.mp4](docs/demo.mp4).
+
 ## Behaviour
 
 - As soon as your message reaches the top of the chat, a full-width copy of

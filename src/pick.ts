@@ -8,7 +8,7 @@
 export type Entry =
   | { kind: "row"; id: string; top: number; bottom: number }
   | { kind: "spacer" }
-  | { kind: "break"; top: number; bottom: number };
+  | { kind: "break"; id: string; top: number; bottom: number };
 
 /** true: pin it; false: skip it; "unknown": its sender is not known yet. */
 export type Eligibility = boolean | "unknown";
@@ -37,7 +37,8 @@ export interface PickInput {
    * Row id to the id of the user message it falls under, or null for rows
    * before the first one. Filled while rows are mounted together with their
    * message, read once BB unmounts that message. Keyed by id, not position,
-   * so it survives outline refreshes. Mutated.
+   * so it survives outline refreshes; an id the outline does not list marks
+   * the row as under an unlisted message. Mutated.
    */
   owners: Map<string, string | null>;
 }
@@ -67,23 +68,24 @@ export function pick(input: PickInput): PickResult {
   const orphan: boolean[] = new Array(entries.length).fill(false);
   let running: number | undefined;
   let pending: number[] = [];
-  let afterBreak = false;
+  let unlisted: string | undefined;
   entries.forEach((entry, i) => {
     if (entry.kind !== "row") {
       running = undefined;
       pending = [];
-      afterBreak = entry.kind === "break";
+      unlisted = entry.kind === "break" ? entry.id : undefined;
       return;
     }
     const userIndex = indexById.get(entry.id);
     if (userIndex !== undefined) {
       for (const p of pending) owner[p] = userIndex - 1;
       pending = [];
-      afterBreak = false;
+      unlisted = undefined;
       running = userIndex;
       owner[i] = userIndex;
-    } else if (afterBreak) {
+    } else if (unlisted !== undefined) {
       orphan[i] = true;
+      owners.set(entry.id, unlisted);
     } else if (running !== undefined) {
       owner[i] = running;
     } else {
@@ -99,7 +101,10 @@ export function pick(input: PickInput): PickResult {
     }
     const remembered = owners.get(entry.id);
     if (remembered === null) owner[i] = -1;
-    else if (remembered !== undefined) owner[i] = indexById.get(remembered);
+    else if (remembered !== undefined) {
+      owner[i] = indexById.get(remembered);
+      if (owner[i] === undefined) orphan[i] = true;
+    }
   });
 
   // The first row still on screen. Under a message the outline lacks, show
@@ -114,16 +119,29 @@ export function pick(input: PickInput): PickResult {
   }
   if (topIndex < 0) return NONE;
   const topEntry = entries[topIndex];
-  if (topEntry?.kind !== "row" || orphan[topIndex]) return NONE;
+  if (topEntry === undefined || topEntry.kind === "spacer" || orphan[topIndex]) return NONE;
 
   let candidate: number | undefined;
-  const topUser = indexById.get(topEntry.id);
-  if (topUser !== undefined) {
+  if (topEntry.kind === "break") {
+    // An unlisted message coming up keeps the one before it pinned, pushed
+    // away like for any message; once it reaches the top there is nothing to
+    // show.
+    if (topEntry.top <= areaTop + 1) return NONE;
+    for (let j = topIndex - 1; j >= 0; j--) {
+      const before = entries[j];
+      if (before?.kind !== "row" || orphan[j]) break;
+      if (owner[j] !== undefined) {
+        candidate = owner[j];
+        break;
+      }
+    }
+    if (candidate === undefined) return NONE;
+  } else {
+    const topUser = indexById.get(topEntry.id);
     // A message sticks as soon as its top reaches the top of the chat, like
     // a sticky header. Until then the one before it stays pinned.
-    candidate = topEntry.top <= areaTop + 1 ? topUser : topUser - 1;
-  } else {
-    candidate = owner[topIndex];
+    if (topUser !== undefined) candidate = topEntry.top <= areaTop + 1 ? topUser : topUser - 1;
+    else candidate = owner[topIndex];
   }
   let fallback = false;
   if (candidate === undefined) {
