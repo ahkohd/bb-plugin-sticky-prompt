@@ -2,9 +2,13 @@
   "name": "bb-plugin-sticky-prompt",
   "version": "0.2.0",
   "type": "module",
-  "private": true,
   "description": "Keeps the message you are reading a reply to pinned at the top of a BB chat.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahkohd/bb-plugin-sticky-prompt.git"
+  },
+  "homepage": "https://github.com/ahkohd/bb-plugin-sticky-prompt",
   "engines": {
     "bb": ">=0.49",
     "bbPluginSdk": ">=0.6.132"
