@@ -2,9 +2,14 @@
 // itself lives in app.tsx and reads threads through the frontend SDK with
 // the user's own session.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { findSender, senderFromPreview } from "./src/senders";
+import { findSender, senderFromPreview, seqFromId } from "./src/senders";
+import { imageSourcesOf } from "./src/thumbs";
 
-const USAGE = "Usage: bb sticky-prompt senders <thread-id> [--last <n>]";
+const USAGE = [
+  "Usage:",
+  "  bb sticky-prompt senders <thread-id> [--last <n>]",
+  "  bb sticky-prompt images <thread-id> [--last <n>]",
+].join("\n");
 
 export default async function plugin(bb: BbPluginApi) {
   bb.settings.define({
@@ -40,10 +45,16 @@ export default async function plugin(bb: BbPluginApi) {
         summary: "Show who sent a thread's newest user messages, and whether the bar would pin them",
         usage: "bb sticky-prompt senders <thread-id> [--last <n>]",
       },
+      {
+        name: "images",
+        summary: "Read the images of a thread's newest user messages the way the bar loads its thumbnails",
+        usage: "bb sticky-prompt images <thread-id> [--last <n>]",
+      },
     ],
     async run(argv) {
       const [command, threadId, ...rest] = argv;
-      if (command !== "senders" || threadId === undefined || !/^thr_[a-z0-9]+$/.test(threadId)) {
+      const known = command === "senders" || command === "images";
+      if (!known || threadId === undefined || !/^thr_[a-z0-9]+$/.test(threadId)) {
         const help = command === undefined || command === "help" || command === "--help";
         return help ? { exitCode: 0, stdout: USAGE } : { exitCode: 1, stderr: USAGE };
       }
@@ -51,6 +62,34 @@ export default async function plugin(bb: BbPluginApi) {
       const last = Math.min(30, Math.max(1, Number(rest[lastFlag + 1] ?? 10) || 10));
       const outline = await bb.sdk.threads.conversationOutline({ threadId, role: "user" });
       const lines = [`thread ${threadId}: ${outline.items.length} user messages`];
+      if (command === "images") {
+        const withImages = outline.items.filter((item) => (item.attachmentSummary?.imageCount ?? 0) > 0);
+        lines.push(`${withImages.length} of them have images`);
+        const thread = await bb.sdk.threads.get({ threadId });
+        for (const item of withImages.slice(-last)) {
+          const seq = seqFromId(item.id);
+          if (seq === undefined) {
+            lines.push(`  ${item.id}: no sequence in the id`);
+            continue;
+          }
+          const sources = imageSourcesOf(await bb.sdk.threads.message({ threadId, seq, before: 0, after: 0 }));
+          for (const source of sources) {
+            if (source.kind === "web") {
+              lines.push(`  ${item.id}: web image ${source.url.slice(0, 60)}`);
+              continue;
+            }
+            try {
+              const file = await bb.sdk.projects.attachments.read({ projectId: thread.projectId, path: source.path });
+              lines.push(`  ${item.id}: ${source.path} ${file.mimeType} ${file.sizeBytes} bytes`);
+            } catch (error) {
+              const reason = error instanceof Error ? error.message.slice(0, 60) : "unknown";
+              lines.push(`  ${item.id}: ${source.path} could not be read: ${reason}`);
+            }
+          }
+          if (sources.length === 0) lines.push(`  ${item.id}: the message lists no images`);
+        }
+        return { exitCode: 0, stdout: lines.join("\n") };
+      }
       lines.push("sender  how      pinned  id  preview");
       for (const item of outline.items.slice(-last)) {
         let who = senderFromPreview(item.preview);

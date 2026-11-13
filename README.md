@@ -12,6 +12,8 @@ top of the chat, as Cursor does. Click the pinned message to scroll back to it.
   and takes its place.
 - A turn that fits on screen is not pinned: you can already see your
   message and the end of the reply together.
+- A message with images shows up to three small thumbnails, then a count of
+  the rest.
 - By default only messages you typed are pinned. Messages from other
   threads, agents and BB system notices are skipped.
 

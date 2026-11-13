@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pick, type Entry, type Eligibility } from "../src/pick";
 import { collectUserInitiators, findSender, senderFromPreview } from "../src/senders";
 import type { Initiator } from "../src/registry";
+import { imageSourcesOf } from "../src/thumbs";
 
 const row = (id: string, top: number, height = 100): Entry => ({
   kind: "row",
@@ -182,5 +183,30 @@ describe("senders", () => {
     expect(who).toBe("system");
     expect(seqs).toEqual([42]);
     expect(await findSender(async () => ({}), "no-seq")).toBeUndefined();
+  });
+});
+
+describe("thumbnails", () => {
+  it("lists web images, then project attachments, from a message answer", () => {
+    expect(
+      imageSourcesOf({
+        message: {
+          attachments: {
+            imageUrls: ["https://example.com/a.png", "javascript:alert(1)", ""],
+            localImagePaths: ["image-1.png"],
+          },
+        },
+        before: [],
+        after: [],
+      }),
+    ).toEqual([
+      { kind: "web", url: "https://example.com/a.png" },
+      { kind: "local", path: "image-1.png" },
+    ]);
+  });
+
+  it("copes with rows that have no attachments", () => {
+    expect(imageSourcesOf({ message: { attachments: null } })).toEqual([]);
+    expect(imageSourcesOf(null)).toEqual([]);
   });
 });

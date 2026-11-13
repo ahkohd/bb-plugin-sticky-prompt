@@ -6,7 +6,14 @@
 //   message (its thread, row, and sender) to src/registry.ts;
 // - an app overlay that draws one bar per chat it heard about, portaled into
 //   the chat's scroll container parent.
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   definePluginApp,
@@ -27,7 +34,8 @@ import {
   type Area,
 } from "./src/registry";
 import { pick, type Entry } from "./src/pick";
-import { findSender, senderFromPreview } from "./src/senders";
+import { findSender, senderFromPreview, seqFromId } from "./src/senders";
+import { cachedBlobUrl, imageSourcesOf } from "./src/thumbs";
 
 interface OutlineItem {
   id: string;
@@ -37,6 +45,15 @@ interface OutlineItem {
 
 const LIST_SELECTOR = '[data-timeline-row-list="top-level"]';
 const OUTLINE_REFRESH_MS = 1500;
+const MAX_THUMBS = 3;
+const THUMB_SIZE = 32;
+
+interface Shown {
+  id: string;
+  label: string;
+  imageCount: number;
+  hasText: boolean;
+}
 
 function Anchor({ message }: ExperimentalMessageMetadataProps) {
   const { id, threadId } = message;
@@ -114,7 +131,10 @@ function StickyBar({
   const sdk = useSdk();
   const { scrollEl, threadId } = area;
   const [host, setHost] = useState<HTMLDivElement | null>(null);
-  const [shown, setShown] = useState<{ id: string; label: string } | null>(null);
+  const [shown, setShown] = useState<Shown | null>(null);
+  const [thumbs, setThumbs] = useState<{ id: string; srcs: string[]; more: number } | null>(null);
+  const messagesRef = useRef(new Map<number, Promise<unknown>>());
+  const projectRef = useRef<Promise<string | null> | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
   const outlineRef = useRef<OutlineItem[]>([]);
   const ownersRef = useRef(new Map<string, number>());
@@ -122,6 +142,21 @@ function StickyBar({
   const includeRef = useRef(includeOthers);
   includeRef.current = includeOthers;
   const scheduleRef = useRef<() => void>(() => {});
+
+  // One `threads.message` answer per message, shared by the sender check
+  // and the thumbnails.
+  const fetchMessage = useCallback(
+    (seq: number): Promise<unknown> => {
+      let pending = messagesRef.current.get(seq);
+      if (pending === undefined) {
+        pending = sdk.threads.message({ threadId, seq, before: 0, after: 0 });
+        pending.catch(() => messagesRef.current.delete(seq));
+        messagesRef.current.set(seq, pending);
+      }
+      return pending;
+    },
+    [sdk, threadId],
+  );
 
   useLayoutEffect(() => {
     const parent = scrollEl.parentElement;
@@ -191,10 +226,7 @@ function StickyBar({
       if (lookupInFlight) return;
       lookupInFlight = true;
       try {
-        const who = await findSender(
-          (seq) => sdk.threads.message({ threadId, seq, before: 0, after: 0, signal }),
-          id,
-        );
+        const who = await findSender(fetchMessage, id);
         if (who === undefined) unresolvedRef.current.add(id);
         else setInitiator(threadId, id, who, false);
       } catch (error) {
@@ -273,7 +305,14 @@ function StickyBar({
         stripRef.current.style.transform = `translateY(${-result.push}px)`;
       }
       setShown((previous) =>
-        previous?.id === item.id ? previous : { id: item.id, label: labelFor(item) },
+        previous?.id === item.id
+          ? previous
+          : {
+              id: item.id,
+              label: labelFor(item),
+              imageCount: item.attachmentSummary?.imageCount ?? 0,
+              hasText: item.preview.trim() !== "",
+            },
       );
     }
 
@@ -296,13 +335,58 @@ function StickyBar({
       unsubscribe();
       scheduleRef.current = () => {};
     };
-  }, [host, scrollEl, sdk, threadId]);
+  }, [host, scrollEl, sdk, threadId, fetchMessage]);
+
+  const shownId = shown?.id;
+  const imageCount = shown?.imageCount ?? 0;
+  useEffect(() => {
+    if (shownId === undefined || imageCount === 0) return;
+    const seq = seqFromId(shownId);
+    if (seq === undefined) return;
+    let cancelled = false;
+    const load = async () => {
+      const sources = imageSourcesOf(await fetchMessage(seq));
+      const first = sources.slice(0, MAX_THUMBS);
+      let projectId: string | null = null;
+      if (first.some((source) => source.kind === "local")) {
+        projectRef.current ??= sdk.threads.get({ threadId }).then(
+          (thread) => thread.projectId ?? null,
+          () => null,
+        );
+        projectId = await projectRef.current;
+      }
+      const srcs = await Promise.all(
+        first.map((source) => {
+          if (source.kind === "web") return Promise.resolve<string | null>(source.url);
+          if (projectId === null) return Promise.resolve(null);
+          const project = projectId;
+          return cachedBlobUrl(`${project}\n${source.path}`, () =>
+            sdk.projects.attachments.read({ projectId: project, path: source.path }),
+          );
+        }),
+      );
+      if (cancelled) return;
+      setThumbs({
+        id: shownId,
+        srcs: srcs.filter((src): src is string => src !== null),
+        more: Math.max(0, sources.length - first.length),
+      });
+    };
+    load().catch((error) => {
+      if (!cancelled) console.warn("[sticky-prompt] could not load images", error);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [shownId, imageCount, fetchMessage, sdk, threadId]);
 
   useEffect(() => {
     scheduleRef.current();
-  }, [includeOthers, fadeEdge, shown]);
+  }, [includeOthers, fadeEdge, shown, thumbs]);
 
   if (host === null || shown === null) return null;
+  const shownThumbs = thumbs?.id === shown.id ? thumbs : null;
+  const showLabel = shown.hasText || shownThumbs === null || shownThumbs.srcs.length === 0;
   return createPortal(
     <div
       ref={stripRef}
@@ -338,19 +422,58 @@ function StickyBar({
           lineHeight: "var(--text-sm--line-height)",
           fontFamily: "inherit",
           cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.625rem",
         }}
       >
-        <span
-          style={{
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            overflowWrap: "anywhere",
-          }}
-        >
-          {shown.label}
-        </span>
+        {shownThumbs !== null && shownThumbs.srcs.length > 0 ? (
+          <span style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            {shownThumbs.srcs.map((src) => (
+              <img
+                key={src}
+                src={src}
+                alt=""
+                draggable={false}
+                style={{
+                  display: "block",
+                  width: THUMB_SIZE,
+                  height: THUMB_SIZE,
+                  objectFit: "cover",
+                  borderRadius: "calc(var(--radius) - 2px)",
+                  border: "1px solid var(--border-seam)",
+                }}
+              />
+            ))}
+            {shownThumbs.more > 0 ? (
+              <span
+                style={{
+                  color: "var(--muted-foreground)",
+                  fontSize: "var(--text-xs)",
+                  lineHeight: "var(--text-xs--line-height)",
+                  paddingLeft: 2,
+                }}
+              >
+                +{shownThumbs.more}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+        {showLabel ? (
+          <span
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {shown.label}
+          </span>
+        ) : null}
       </button>
     </div>,
     host,
