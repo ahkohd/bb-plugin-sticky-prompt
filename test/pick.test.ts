@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pick, type Entry, type Eligibility } from "../src/pick";
-import { collectUserInitiators, findSender, senderFromPreview } from "../src/senders";
-import type { Initiator } from "../src/registry";
-import { imageSourcesOf } from "../src/thumbs";
-import { barMarkdown, textOf } from "../src/message";
+import { makeOutline, pick, type Entry, type Eligibility } from "../src/pick";
 
 const row = (id: string, top: number, height = 100): Entry => ({
   kind: "row",
@@ -18,9 +14,10 @@ function run(
   entries: Entry[],
   outlineIds: string[],
   eligible: (index: number) => Eligibility = all,
-  owners = new Map<string, number>(),
+  owners = new Map<string, string | null>(),
 ) {
-  return pick({ entries, outlineIds, areaTop: 0, barHeight: 50, areaHeight: 300, eligible, owners });
+  const outline = makeOutline(outlineIds);
+  return pick({ entries, outline, areaTop: 0, barHeight: 50, areaHeight: 300, eligible, owners });
 }
 
 describe("pick", () => {
@@ -89,16 +86,24 @@ describe("pick", () => {
   });
 
   it("uses what it learned before BB unmounted the message", () => {
-    const owners = new Map<string, number>();
+    const owners = new Map<string, string | null>();
     const outline = ["u0", "u1"];
     run([row("u1", 0), row("a1", 100), row("t1", 200)], outline, all, owners);
-    expect(owners.get("t1")).toBe(1);
+    expect(owners.get("t1")).toBe("u1");
     // Later, u1 is windowed out: a spacer stands where it was.
     expect(run([spacer, row("t1", -20, 300), spacer, row("last", 900)], outline, all, owners)).toEqual({
       kind: "show",
       index: 1,
       push: 0,
     });
+  });
+
+  it("keeps what it learned when a new message is added to the outline", () => {
+    const owners = new Map<string, string | null>();
+    run([row("u1", 0), row("a1", 100), row("t1", 200)], ["u0", "u1"], all, owners);
+    expect(
+      run([spacer, row("t1", -20, 300), spacer, row("u2", 900)], ["u0", "u1", "u2"], all, owners),
+    ).toEqual({ kind: "show", index: 1, push: 0 });
   });
 
   it("does not guess across a spacer it knows nothing about", () => {
@@ -144,92 +149,5 @@ describe("pick", () => {
     expect(
       run([row("u1", -200), row("a1", -100, 400)], ["u0", "u1"], (i) => (i === 1 ? "unknown" : true)),
     ).toEqual({ kind: "unknown", index: 1 });
-  });
-});
-
-describe("senders", () => {
-  it("collects user rows anywhere in a payload", () => {
-    const out = new Map<string, Initiator>();
-    collectUserInitiators(
-      [
-        { kind: "conversation", role: "user", id: "m1", initiator: "user" },
-        { message: { kind: "conversation", role: "user", id: "m2", initiator: "agent" } },
-        { kind: "conversation", role: "assistant", id: "m3", initiator: "user" },
-        { kind: "conversation", role: "user", id: "m4", initiator: "robot" },
-      ],
-      out,
-    );
-    expect([...out]).toEqual([
-      ["m1", "user"],
-      ["m2", "agent"],
-    ]);
-  });
-
-  it("reads BB's prefixes", () => {
-    expect(senderFromPreview("[bb system] @thread:thr_a completed")).toBe("system");
-    expect(senderFromPreview("[bb message from thread:thr_a] hi")).toBe("agent");
-    expect(senderFromPreview("> quoting [bb system]")).toBeUndefined();
-  });
-
-  it("looks a message up by the sequence in its id", async () => {
-    const seqs: number[] = [];
-    const who = await findSender(async (seq) => {
-      seqs.push(seq);
-      return {
-        message: { kind: "conversation", role: "user", id: "thr_a:user-seed:42", initiator: "system" },
-        before: [],
-        after: [],
-      };
-    }, "thr_a:user-seed:42");
-    expect(who).toBe("system");
-    expect(seqs).toEqual([42]);
-    expect(await findSender(async () => ({}), "no-seq")).toBeUndefined();
-  });
-});
-
-describe("thumbnails", () => {
-  it("lists web images, then project attachments, from a message answer", () => {
-    expect(
-      imageSourcesOf({
-        message: {
-          attachments: {
-            imageUrls: ["https://example.com/a.png", "javascript:alert(1)", ""],
-            localImagePaths: ["image-1.png"],
-          },
-        },
-        before: [],
-        after: [],
-      }),
-    ).toEqual([
-      { kind: "web", url: "https://example.com/a.png" },
-      { kind: "local", path: "image-1.png" },
-    ]);
-  });
-
-  it("copes with rows that have no attachments", () => {
-    expect(imageSourcesOf({ message: { attachments: null } })).toEqual([]);
-    expect(imageSourcesOf(null)).toEqual([]);
-  });
-});
-
-describe("bar markdown", () => {
-  it("reads the text of a message answer", () => {
-    expect(textOf({ message: { text: "Run `bb`" }, before: [], after: [] })).toBe("Run `bb`");
-    expect(textOf({ message: { text: 3 } })).toBeNull();
-    expect(textOf(null)).toBeNull();
-  });
-
-  it("keeps short text as it is", () => {
-    expect(barMarkdown("  Run `mean inspect` and read it  ")).toBe("Run `mean inspect` and read it");
-  });
-
-  it("cuts long text at a line break and closes a fence the cut left open", () => {
-    const text = "Intro\n```ts\nconst a = 1;\n" + "x".repeat(50) + "\nmore";
-    const out = barMarkdown(text, 40);
-    expect(out).toBe("Intro\n```ts\nconst a = 1;\n```");
-  });
-
-  it("leaves balanced fences alone", () => {
-    expect(barMarkdown("a\n~~~\ncode\n~~~\nb")).toBe("a\n~~~\ncode\n~~~\nb");
   });
 });

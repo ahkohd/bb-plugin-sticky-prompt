@@ -11,10 +11,19 @@ export type Entry =
 /** true: pin it; false: skip it; "unknown": its sender is not known yet. */
 export type Eligibility = boolean | "unknown";
 
+/** The thread's user messages, oldest first, with each id's position. */
+export interface Outline {
+  ids: readonly string[];
+  indexById: ReadonlyMap<string, number>;
+}
+
+export function makeOutline(ids: readonly string[]): Outline {
+  return { ids, indexById: new Map(ids.map((id, index) => [id, index])) };
+}
+
 export interface PickInput {
   entries: readonly Entry[];
-  /** Ids of the thread's user messages, oldest first. */
-  outlineIds: readonly string[];
+  outline: Outline;
   /** Top edge of the scroll container, in the same coordinates as rows. */
   areaTop: number;
   /** Height of the bar, for the push-out effect. */
@@ -23,11 +32,12 @@ export interface PickInput {
   areaHeight: number;
   eligible: (index: number) => Eligibility;
   /**
-   * Row id to the index of the user message it falls under. Filled while
-   * rows are mounted together with their message, read once BB unmounts
-   * that message. Mutated.
+   * Row id to the id of the user message it falls under, or null for rows
+   * before the first one. Filled while rows are mounted together with their
+   * message, read once BB unmounts that message. Keyed by id, not position,
+   * so it survives outline refreshes. Mutated.
    */
-  owners: Map<string, number>;
+  owners: Map<string, string | null>;
 }
 
 export type PickResult =
@@ -38,10 +48,9 @@ export type PickResult =
 const NONE: PickResult = { kind: "none" };
 
 export function pick(input: PickInput): PickResult {
-  const { entries, outlineIds, areaTop, barHeight, areaHeight, eligible, owners } = input;
+  const { entries, outline, areaTop, barHeight, areaHeight, eligible, owners } = input;
+  const { ids: outlineIds, indexById } = outline;
   if (outlineIds.length === 0) return NONE;
-  const indexById = new Map<string, number>();
-  outlineIds.forEach((id, index) => indexById.set(id, index));
 
   // Which user message each mounted row falls under. A spacer may hide user
   // messages, so knowledge never crosses one.
@@ -69,8 +78,13 @@ export function pick(input: PickInput): PickResult {
   entries.forEach((entry, i) => {
     if (entry.kind !== "row") return;
     const known = owner[i];
-    if (known !== undefined) owners.set(entry.id, known);
-    else owner[i] = owners.get(entry.id);
+    if (known !== undefined) {
+      owners.set(entry.id, known < 0 ? null : (outlineIds[known] ?? null));
+      return;
+    }
+    const remembered = owners.get(entry.id);
+    if (remembered === null) owner[i] = -1;
+    else if (remembered !== undefined) owner[i] = indexById.get(remembered);
   });
 
   // The first row still on screen.

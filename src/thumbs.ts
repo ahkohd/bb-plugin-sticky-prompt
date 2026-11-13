@@ -5,8 +5,6 @@
 // from a blob URL, kept in a small cache so scrolling back and forth does
 // not refetch them.
 
-import { rowOf } from "./message";
-
 export type ImageSource = { kind: "web"; url: string } | { kind: "local"; path: string };
 
 const SAFE_WEB_IMAGE = /^(https?:|data:image\/)/i;
@@ -17,9 +15,8 @@ function strings(value: unknown): string[] {
     : [];
 }
 
-/** The images of a `threads.message` answer (or of a bare row), in order. */
-export function imageSourcesOf(response: unknown): ImageSource[] {
-  const attachments = rowOf(response)?.attachments;
+/** The images of a user row's `attachments`, in order. */
+export function imageSourcesOf(attachments: unknown): ImageSource[] {
   if (attachments === null || typeof attachments !== "object") return [];
   const fields = attachments as Record<string, unknown>;
   return [
@@ -36,6 +33,12 @@ const blobUrls = new Map<string, Promise<string | null>>();
 export interface AttachmentBytes {
   bytes: Uint8Array;
   mimeType: string;
+}
+
+function revoke(pending: Promise<string | null>): void {
+  void pending.then((url) => {
+    if (url !== null) URL.revokeObjectURL(url);
+  });
 }
 
 /**
@@ -65,9 +68,13 @@ export function cachedBlobUrl(
     const oldest = blobUrls.entries().next().value;
     if (oldest === undefined) break;
     blobUrls.delete(oldest[0]);
-    void oldest[1].then((url) => {
-      if (url !== null) URL.revokeObjectURL(url);
-    });
+    revoke(oldest[1]);
   }
   return pending;
+}
+
+/** Revoke every cached URL, including ones still loading. */
+export function clearBlobUrls(): void {
+  for (const pending of blobUrls.values()) revoke(pending);
+  blobUrls.clear();
 }

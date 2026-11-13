@@ -2,6 +2,7 @@
 // itself lives in app.tsx and reads threads through the frontend SDK with
 // the user's own session.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { userRowOf } from "./src/message";
 import { findSender, senderFromPreview, seqFromId } from "./src/senders";
 import { imageSourcesOf } from "./src/thumbs";
 
@@ -10,6 +11,16 @@ const USAGE = [
   "  bb sticky-prompt senders <thread-id> [--last <n>]",
   "  bb sticky-prompt images <thread-id> [--last <n>]",
 ].join("\n");
+const MAX_LAST = 30;
+const MAX_IMAGE_LINES = 40;
+
+function oneLine(text: string, max: number): string {
+  return text.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function reason(error: unknown): string {
+  return oneLine(error instanceof Error ? error.message : String(error), 120);
+}
 
 export default async function plugin(bb: BbPluginApi) {
   bb.settings.define({
@@ -29,6 +40,76 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
+  async function senders(threadId: string, last: number): Promise<string[]> {
+    const outline = await bb.sdk.threads.conversationOutline({ threadId, role: "user" });
+    const lines = [`thread ${threadId}: ${outline.items.length} user messages`];
+    lines.push("sender  how      pinned  id  preview");
+    for (const item of outline.items.slice(-last)) {
+      let who = senderFromPreview(item.preview);
+      let how = "prefix";
+      if (who === undefined) {
+        how = "lookup";
+        try {
+          who = await findSender(
+            (seq) => bb.sdk.threads.message({ threadId, seq, before: 0, after: 0 }),
+            item.id,
+          );
+        } catch (error) {
+          how = `error: ${reason(error).slice(0, 40)}`;
+        }
+      }
+      const pinned = who === undefined || who === "user" ? "yes" : "no";
+      lines.push(
+        `${(who ?? "?").padEnd(7)} ${how.padEnd(8)} ${pinned.padEnd(7)} ${item.id}  ${oneLine(item.preview, 50)}`,
+      );
+    }
+    return lines;
+  }
+
+  async function images(threadId: string, last: number): Promise<string[]> {
+    const outline = await bb.sdk.threads.conversationOutline({ threadId, role: "user" });
+    const withImages = outline.items.filter((item) => (item.attachmentSummary?.imageCount ?? 0) > 0);
+    const lines = [
+      `thread ${threadId}: ${outline.items.length} user messages, ${withImages.length} with images`,
+    ];
+    const thread = await bb.sdk.threads.get({ threadId });
+    let omitted = 0;
+    for (const item of withImages.slice(-last)) {
+      const seq = seqFromId(item.id);
+      const row =
+        seq === undefined
+          ? null
+          : userRowOf(await bb.sdk.threads.message({ threadId, seq, before: 0, after: 0 }), item.id);
+      if (row === null) {
+        lines.push(`  ${item.id}: BB did not return this message`);
+        continue;
+      }
+      const sources = imageSourcesOf(row.attachments);
+      if (sources.length === 0) lines.push(`  ${item.id}: the message lists no images`);
+      for (const source of sources) {
+        if (lines.length > MAX_IMAGE_LINES) {
+          omitted += 1;
+          continue;
+        }
+        if (source.kind === "web") {
+          lines.push(`  ${item.id}: web image ${oneLine(source.url, 60)}`);
+          continue;
+        }
+        try {
+          const file = await bb.sdk.projects.attachments.read({
+            projectId: thread.projectId,
+            path: source.path,
+          });
+          lines.push(`  ${item.id}: ${oneLine(source.path, 60)} ${file.mimeType} ${file.sizeBytes} bytes`);
+        } catch (error) {
+          lines.push(`  ${item.id}: ${oneLine(source.path, 60)} could not be read: ${reason(error)}`);
+        }
+      }
+    }
+    if (omitted > 0) lines.push(`  ${omitted} more images not checked`);
+    return lines;
+  }
+
   bb.cli.register({
     name: "sticky-prompt",
     summary: "Diagnose the Sticky Prompt plugin",
@@ -46,63 +127,22 @@ export default async function plugin(bb: BbPluginApi) {
     ],
     async run(argv) {
       const [command, threadId, ...rest] = argv;
+      if (command === undefined || command === "help" || command === "--help") {
+        return { exitCode: 0, stdout: USAGE };
+      }
       const known = command === "senders" || command === "images";
-      if (!known || threadId === undefined || !/^thr_[a-z0-9]+$/.test(threadId)) {
-        const help = command === undefined || command === "help" || command === "--help";
-        return help ? { exitCode: 0, stdout: USAGE } : { exitCode: 1, stderr: USAGE };
+      if (!known || threadId === undefined || !/^thr_\w+$/.test(threadId)) {
+        return { exitCode: 1, stderr: USAGE };
       }
       const lastFlag = rest.indexOf("--last");
-      const last = Math.min(30, Math.max(1, Number(rest[lastFlag + 1] ?? 10) || 10));
-      const outline = await bb.sdk.threads.conversationOutline({ threadId, role: "user" });
-      const lines = [`thread ${threadId}: ${outline.items.length} user messages`];
-      if (command === "images") {
-        const withImages = outline.items.filter((item) => (item.attachmentSummary?.imageCount ?? 0) > 0);
-        lines.push(`${withImages.length} of them have images`);
-        const thread = await bb.sdk.threads.get({ threadId });
-        for (const item of withImages.slice(-last)) {
-          const seq = seqFromId(item.id);
-          if (seq === undefined) {
-            lines.push(`  ${item.id}: no sequence in the id`);
-            continue;
-          }
-          const sources = imageSourcesOf(await bb.sdk.threads.message({ threadId, seq, before: 0, after: 0 }));
-          for (const source of sources) {
-            if (source.kind === "web") {
-              lines.push(`  ${item.id}: web image ${source.url.slice(0, 60)}`);
-              continue;
-            }
-            try {
-              const file = await bb.sdk.projects.attachments.read({ projectId: thread.projectId, path: source.path });
-              lines.push(`  ${item.id}: ${source.path} ${file.mimeType} ${file.sizeBytes} bytes`);
-            } catch (error) {
-              const reason = error instanceof Error ? error.message.slice(0, 60) : "unknown";
-              lines.push(`  ${item.id}: ${source.path} could not be read: ${reason}`);
-            }
-          }
-          if (sources.length === 0) lines.push(`  ${item.id}: the message lists no images`);
-        }
+      const last = Math.min(MAX_LAST, Math.max(1, Number(rest[lastFlag + 1] ?? 10) || 10));
+      try {
+        const lines =
+          command === "senders" ? await senders(threadId, last) : await images(threadId, last);
         return { exitCode: 0, stdout: lines.join("\n") };
+      } catch (error) {
+        return { exitCode: 1, stderr: `Could not read thread ${threadId}: ${reason(error)}` };
       }
-      lines.push("sender  how      pinned  id  preview");
-      for (const item of outline.items.slice(-last)) {
-        let who = senderFromPreview(item.preview);
-        let how = "prefix";
-        if (who === undefined) {
-          how = "lookup";
-          try {
-            who = await findSender(
-              (seq) => bb.sdk.threads.message({ threadId, seq, before: 0, after: 0 }),
-              item.id,
-            );
-          } catch (error) {
-            how = `error: ${error instanceof Error ? error.message.slice(0, 40) : "unknown"}`;
-          }
-        }
-        const pinned = who === undefined || who === "user" ? "yes" : "no";
-        const preview = item.preview.replace(/\s+/g, " ").slice(0, 50);
-        lines.push(`${(who ?? "?").padEnd(7)} ${how.padEnd(8)} ${pinned.padEnd(7)} ${item.id}  ${preview}`);
-      }
-      return { exitCode: 0, stdout: lines.join("\n") };
     },
   });
 }

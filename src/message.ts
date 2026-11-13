@@ -1,36 +1,87 @@
-// Reading one `threads.message` answer, and preparing its text for the bar.
+// One `threads.message` answer, and the Markdown source the bar renders.
 
-/** The row of a `threads.message` answer, or the value itself if it is a row. */
-export function rowOf(response: unknown): Record<string, unknown> | null {
-  if (response === null || typeof response !== "object") return null;
-  const record = response as Record<string, unknown>;
-  if (record.message !== null && typeof record.message === "object") {
-    return record.message as Record<string, unknown>;
-  }
-  return record;
+import type { Initiator } from "./registry";
+
+export interface UserRow {
+  id: string;
+  text: string;
+  initiator: Initiator | undefined;
+  attachments: unknown;
 }
 
-export function textOf(response: unknown): string | null {
-  const text = rowOf(response)?.text;
-  return typeof text === "string" ? text : null;
+const INITIATORS: ReadonlySet<string> = new Set(["agent", "system", "user"]);
+
+/**
+ * The user row of a `threads.message` answer, or null unless it is exactly
+ * the message asked for: a seq that lands on another row must not change
+ * what the bar shows.
+ */
+export function userRowOf(response: unknown, id: string): UserRow | null {
+  if (response === null || typeof response !== "object") return null;
+  const message = (response as { message?: unknown }).message;
+  if (message === null || typeof message !== "object") return null;
+  const row = message as Record<string, unknown>;
+  if (row.role !== "user" || row.id !== id) return null;
+  return {
+    id,
+    text: typeof row.text === "string" ? row.text : "",
+    initiator:
+      typeof row.initiator === "string" && INITIATORS.has(row.initiator)
+        ? (row.initiator as Initiator)
+        : undefined,
+    attachments: row.attachments,
+  };
 }
 
 const MAX_SOURCE = 2000;
+const MAX_INLINE_CODE = 160;
+const FENCE = /^\s*(`{3,}|~{3,})/;
+
+/** A fenced block becomes one inline code span, so no code renderer runs. */
+function inlineFences(source: string): string {
+  const lines = source.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const open = FENCE.exec(line);
+    if (open === null) {
+      out.push(line);
+      continue;
+    }
+    const fence = open[1] ?? "```";
+    const body: string[] = [];
+    for (i++; i < lines.length && !(lines[i] ?? "").trimStart().startsWith(fence); i++) {
+      body.push(lines[i] ?? "");
+    }
+    const code = body.join(" ").replace(/\s+/g, " ").trim().slice(0, MAX_INLINE_CODE);
+    if (code !== "") out.push(code.includes("`") ? `\`\` ${code} \`\`` : `\`${code}\``);
+  }
+  return out.join("\n");
+}
 
 /**
- * The start of a message as Markdown source for the two-line bar. Long text
- * is cut, at a line break where one is near, and a code fence left open by
- * the cut is closed so the rest does not turn into code.
+ * BB's own bubbles replace the sender prefix with a sender line. The bar has
+ * no room for one: a thread mention stands in for the sending thread, and
+ * BB's system prefix is dropped.
+ */
+export function withoutSenderPrefix(text: string): string {
+  return text
+    .replace(/^\s*\[bb message from thread:(thr_\w+)\]\s*/, "@thread:$1 ")
+    .replace(/^\s*\[bb system\]\s*/, "");
+}
+
+/**
+ * The start of a message as Markdown for the two-line bar: cut long text at a
+ * line break, turn code blocks into inline code, show images as their alt
+ * text, and escape directive lines so nothing embeds or loads from the bar.
  */
 export function barMarkdown(text: string, max = MAX_SOURCE): string {
-  let source = text.trim();
+  let source = withoutSenderPrefix(text).trim();
   if (source.length > max) {
     const cut = source.lastIndexOf("\n", max);
     source = source.slice(0, cut > max / 2 ? cut : max).trimEnd();
   }
-  for (const fence of ["```", "~~~"]) {
-    const opened = source.split("\n").filter((line) => line.trimStart().startsWith(fence)).length;
-    if (opened % 2 === 1) source += `\n${fence}`;
-  }
-  return source;
+  return inlineFences(source)
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^(\s*):/gm, "$1\\:");
 }
