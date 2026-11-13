@@ -14,6 +14,9 @@ top of the chat, as Cursor does. Click the pinned message to scroll back to it.
   message and the end of the reply together.
 - A message with images shows up to three small thumbnails, then a count of
   the rest.
+- The text is drawn by BB's own Markdown component, so code, bold and links
+  look as they do in your message. Paragraphs and list items run together
+  on one line; tables and images in the text are left out.
 - By default only messages you typed are pinned. Messages from other
   threads, agents and BB system notices are skipped.
 

@@ -5,6 +5,8 @@
 // from a blob URL, kept in a small cache so scrolling back and forth does
 // not refetch them.
 
+import { rowOf } from "./message";
+
 export type ImageSource = { kind: "web"; url: string } | { kind: "local"; path: string };
 
 const SAFE_WEB_IMAGE = /^(https?:|data:image\/)/i;
@@ -17,13 +19,7 @@ function strings(value: unknown): string[] {
 
 /** The images of a `threads.message` answer (or of a bare row), in order. */
 export function imageSourcesOf(response: unknown): ImageSource[] {
-  if (response === null || typeof response !== "object") return [];
-  const record = response as Record<string, unknown>;
-  const row =
-    record.message !== null && typeof record.message === "object"
-      ? (record.message as Record<string, unknown>)
-      : record;
-  const attachments = row.attachments;
+  const attachments = rowOf(response)?.attachments;
   if (attachments === null || typeof attachments !== "object") return [];
   const fields = attachments as Record<string, unknown>;
   return [

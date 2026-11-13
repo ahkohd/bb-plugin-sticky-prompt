@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-sticky-prompt",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "type": "module",
   "private": true,
   "description": "Keeps the message you are reading a reply to pinned at the top of a BB chat.",

@@ -17,6 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   definePluginApp,
+  Markdown,
   useSdk,
   useSettings,
   type ExperimentalMessageMetadataProps,
@@ -36,6 +37,7 @@ import {
 import { pick, type Entry } from "./src/pick";
 import { findSender, senderFromPreview, seqFromId } from "./src/senders";
 import { cachedBlobUrl, imageSourcesOf } from "./src/thumbs";
+import { barMarkdown, textOf } from "./src/message";
 
 interface OutlineItem {
   id: string;
@@ -47,6 +49,22 @@ const LIST_SELECTOR = '[data-timeline-row-list="top-level"]';
 const OUTLINE_REFRESH_MS = 1500;
 const MAX_THUMBS = 3;
 const THUMB_SIZE = 32;
+
+// BB's Markdown renders blocks; the bar has two lines. Run every block into
+// one line of text, keep inline styling (code, bold, links, mentions) as BB
+// draws it, and drop what cannot sit in a line.
+const T = "[data-sticky-prompt-text]";
+const FLATTEN_CSS = `
+${T} :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, li, pre, div, section, figure) {
+  display: inline; margin: 0; padding: 0; border: 0; background: none;
+  font-size: inherit; line-height: inherit;
+}
+${T} :is(p, h1, h2, h3, h4, h5, h6, li, pre, blockquote)::after { content: " "; }
+${T} li::before, ${T} li::marker { content: none; }
+${T} pre, ${T} pre code { white-space: normal; }
+${T} :is(button, img, video, iframe, table, hr, input) { display: none; }
+${T} a { pointer-events: none; }
+`;
 
 interface Shown {
   id: string;
@@ -125,6 +143,7 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [thumbs, setThumbs] = useState<{ id: string; srcs: string[]; more: number } | null>(null);
+  const [source, setSource] = useState<{ id: string; markdown: string } | null>(null);
   const messagesRef = useRef(new Map<number, Promise<unknown>>());
   const projectRef = useRef<Promise<string | null> | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
@@ -332,12 +351,21 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
   const shownId = shown?.id;
   const imageCount = shown?.imageCount ?? 0;
   useEffect(() => {
-    if (shownId === undefined || imageCount === 0) return;
+    if (shownId === undefined) return;
     const seq = seqFromId(shownId);
     if (seq === undefined) return;
     let cancelled = false;
     const load = async () => {
-      const sources = imageSourcesOf(await fetchMessage(seq));
+      // The full text, rendered by BB's own Markdown component. Until it
+      // arrives the bar shows the outline's plain preview.
+      const message = await fetchMessage(seq);
+      const text = textOf(message);
+      if (cancelled) return;
+      if (text !== null && text.trim() !== "") {
+        setSource({ id: shownId, markdown: barMarkdown(text) });
+      }
+      if (imageCount === 0) return;
+      const sources = imageSourcesOf(message);
       const first = sources.slice(0, MAX_THUMBS);
       let projectId: string | null = null;
       if (first.some((source) => source.kind === "local")) {
@@ -365,7 +393,7 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
       });
     };
     load().catch((error) => {
-      if (!cancelled) console.warn("[sticky-prompt] could not load images", error);
+      if (!cancelled) console.warn("[sticky-prompt] could not load the message", error);
     });
     return () => {
       cancelled = true;
@@ -374,11 +402,13 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
 
   useEffect(() => {
     scheduleRef.current();
-  }, [includeOthers, shown, thumbs]);
+  }, [includeOthers, shown, thumbs, source]);
 
   if (host === null || shown === null) return null;
   const shownThumbs = thumbs?.id === shown.id ? thumbs : null;
   const showLabel = shown.hasText || shownThumbs === null || shownThumbs.srcs.length === 0;
+  const markdown = source?.id === shown.id ? source.markdown : null;
+  const jump = () => void jumpTo(scrollEl, shown.id);
   return createPortal(
     <div
       ref={stripRef}
@@ -390,11 +420,19 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
           "linear-gradient(to bottom, var(--background) 0, var(--background) calc(100% - 16px), transparent 100%)",
       }}
     >
-      <button
-        type="button"
+      <style>{FLATTEN_CSS}</style>
+      {/* A div, not a button: the Markdown inside may contain links. */}
+      <div
+        role="button"
+        tabIndex={0}
         title={shown.label}
         aria-label={`Scroll to your message: ${shown.label}`}
-        onClick={() => void jumpTo(scrollEl, shown.id)}
+        onClick={jump}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          jump();
+        }}
         style={{
           pointerEvents: "auto",
           width: "100%",
@@ -451,7 +489,8 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
           </span>
         ) : null}
         {showLabel ? (
-          <span
+          <div
+            data-sticky-prompt-text=""
             style={{
               flex: "1 1 auto",
               minWidth: 0,
@@ -462,10 +501,10 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
               overflowWrap: "anywhere",
             }}
           >
-            {shown.label}
-          </span>
+            {markdown === null ? shown.label : <Markdown content={markdown} />}
+          </div>
         ) : null}
-      </button>
+      </div>
     </div>,
     host,
   );

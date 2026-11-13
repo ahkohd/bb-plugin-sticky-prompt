@@ -3,6 +3,7 @@ import { pick, type Entry, type Eligibility } from "../src/pick";
 import { collectUserInitiators, findSender, senderFromPreview } from "../src/senders";
 import type { Initiator } from "../src/registry";
 import { imageSourcesOf } from "../src/thumbs";
+import { barMarkdown, textOf } from "../src/message";
 
 const row = (id: string, top: number, height = 100): Entry => ({
   kind: "row",
@@ -208,5 +209,27 @@ describe("thumbnails", () => {
   it("copes with rows that have no attachments", () => {
     expect(imageSourcesOf({ message: { attachments: null } })).toEqual([]);
     expect(imageSourcesOf(null)).toEqual([]);
+  });
+});
+
+describe("bar markdown", () => {
+  it("reads the text of a message answer", () => {
+    expect(textOf({ message: { text: "Run `bb`" }, before: [], after: [] })).toBe("Run `bb`");
+    expect(textOf({ message: { text: 3 } })).toBeNull();
+    expect(textOf(null)).toBeNull();
+  });
+
+  it("keeps short text as it is", () => {
+    expect(barMarkdown("  Run `mean inspect` and read it  ")).toBe("Run `mean inspect` and read it");
+  });
+
+  it("cuts long text at a line break and closes a fence the cut left open", () => {
+    const text = "Intro\n```ts\nconst a = 1;\n" + "x".repeat(50) + "\nmore";
+    const out = barMarkdown(text, 40);
+    expect(out).toBe("Intro\n```ts\nconst a = 1;\n```");
+  });
+
+  it("leaves balanced fences alone", () => {
+    expect(barMarkdown("a\n~~~\ncode\n~~~\nb")).toBe("a\n~~~\ncode\n~~~\nb");
   });
 });
