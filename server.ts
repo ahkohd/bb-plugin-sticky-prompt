@@ -24,7 +24,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Also pin messages from agents and BB",
       description:
-        "Off: only messages you typed are pinned. On: messages from other threads, agents and BB system notices are pinned too.",
+        "Messages from other threads, agents and BB system notices are pinned as well as yours.",
       default: false,
     },
   });
