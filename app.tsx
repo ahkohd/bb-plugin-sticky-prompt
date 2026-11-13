@@ -13,7 +13,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { getAreas, noteMessage, prune, setInitiator, subscribeAreas } from "./src/registry";
 import { clearBlobUrls } from "./src/thumbs";
-import { StickyBar } from "./src/bar";
+import { StickyBar, type Motion } from "./src/bar";
 
 const ANCHOR_RETRY_FRAMES = 20;
 const PRUNE_MS = 2000;
@@ -51,6 +51,8 @@ function Overlay() {
   if (isLoading && values === undefined) return null;
   if (values?.enabled === false) return null;
   const includeOthers = values?.includeOtherSenders === true;
+  const motion: Motion =
+    values?.motion === "fade" || values?.motion === "off" ? values.motion : "follow";
   return (
     <>
       {areas.map((area) => (
@@ -58,6 +60,7 @@ function Overlay() {
           key={`${area.key}:${area.threadId}`}
           area={area}
           includeOthers={includeOthers}
+          motion={motion}
         />
       ))}
     </>
