@@ -26,7 +26,6 @@ Open Settings, then Installed plugins, then Sticky Prompt, or use
 | --- | --- | --- |
 | `enabled` | on | Show the pinned message. |
 | `includeOtherSenders` | off | Also pin messages from agents, other threads and BB. |
-| `fadeEdge` | off | Fade the reply in under the bar instead of a hard edge. |
 
 ## How it works
 

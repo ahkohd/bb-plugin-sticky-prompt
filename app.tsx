@@ -119,15 +119,7 @@ async function jumpTo(scrollEl: HTMLElement, id: string): Promise<void> {
   }
 }
 
-function StickyBar({
-  area,
-  includeOthers,
-  fadeEdge,
-}: {
-  area: Area;
-  includeOthers: boolean;
-  fadeEdge: boolean;
-}) {
+function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean }) {
   const sdk = useSdk();
   const { scrollEl, threadId } = area;
   const [host, setHost] = useState<HTMLDivElement | null>(null);
@@ -382,7 +374,7 @@ function StickyBar({
 
   useEffect(() => {
     scheduleRef.current();
-  }, [includeOthers, fadeEdge, shown, thumbs]);
+  }, [includeOthers, shown, thumbs]);
 
   if (host === null || shown === null) return null;
   const shownThumbs = thumbs?.id === shown.id ? thumbs : null;
@@ -392,11 +384,10 @@ function StickyBar({
       ref={stripRef}
       style={{
         display: "flex",
-        // Flat like the rest of BB: a hard edge unless the fade is turned on.
-        padding: fadeEdge ? "8px 0 16px" : "8px 0",
-        background: fadeEdge
-          ? "linear-gradient(to bottom, var(--background) 0, var(--background) calc(100% - 16px), transparent 100%)"
-          : "var(--background)",
+        // The reply fades in under the bar rather than meeting a hard edge.
+        padding: "8px 0 16px",
+        background:
+          "linear-gradient(to bottom, var(--background) 0, var(--background) calc(100% - 16px), transparent 100%)",
       }}
     >
       <button
@@ -485,7 +476,6 @@ function Overlay() {
   const { values } = useSettings();
   const enabled = values?.enabled !== false;
   const includeOthers = values?.includeOtherSenders === true;
-  const fadeEdge = values?.fadeEdge === true;
   useEffect(() => {
     const timer = window.setInterval(prune, 2000);
     return () => window.clearInterval(timer);
@@ -498,7 +488,6 @@ function Overlay() {
           key={`${area.key}:${area.threadId}`}
           area={area}
           includeOthers={includeOthers}
-          fadeEdge={fadeEdge}
         />
       ))}
     </>
