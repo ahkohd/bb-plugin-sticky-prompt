@@ -19,6 +19,8 @@ export interface PickInput {
   areaTop: number;
   /** Height of the bar, for the push-out effect. */
   barHeight: number;
+  /** Visible height of the scroll container. */
+  areaHeight: number;
   eligible: (index: number) => Eligibility;
   /**
    * Row id to the index of the user message it falls under. Filled while
@@ -36,7 +38,7 @@ export type PickResult =
 const NONE: PickResult = { kind: "none" };
 
 export function pick(input: PickInput): PickResult {
-  const { entries, outlineIds, areaTop, barHeight, eligible, owners } = input;
+  const { entries, outlineIds, areaTop, barHeight, areaHeight, eligible, owners } = input;
   if (outlineIds.length === 0) return NONE;
   const indexById = new Map<string, number>();
   outlineIds.forEach((id, index) => indexById.set(id, index));
@@ -111,16 +113,38 @@ export function pick(input: PickInput): PickResult {
   }
   if (chosen < 0) return NONE;
 
-  // The next pinned message pushes the bar up as it reaches the top.
-  let push = 0;
+  // The next pinned message ends this turn and pushes the bar up as it
+  // reaches the top.
+  let next: Extract<Entry, { kind: "row" }> | undefined;
   for (let i = topIndex; i < entries.length; i++) {
     const entry = entries[i];
     if (entry?.kind !== "row") continue;
     const userIndex = indexById.get(entry.id);
     if (userIndex === undefined || userIndex <= chosen) continue;
     if (eligible(userIndex) === false) continue;
-    push = Math.min(barHeight, Math.max(0, areaTop + barHeight - entry.top));
+    next = entry;
     break;
   }
+
+  // A turn that fits on screen needs no pin: its message and the end of its
+  // reply can be seen together. A message or an end BB has unmounted is far
+  // away, so the turn is long.
+  const chosenId = outlineIds[chosen];
+  const start = entries.findIndex((entry) => entry.kind === "row" && entry.id === chosenId);
+  const startRow = entries[start];
+  if (startRow?.kind === "row") {
+    let end: number | undefined = next?.top;
+    if (end === undefined) {
+      const after = entries.slice(start + 1);
+      const last = entries[entries.length - 1];
+      if (after.every((entry) => entry.kind === "row") && last?.kind === "row") {
+        end = last.bottom;
+      }
+    }
+    if (end !== undefined && end - startRow.top <= areaHeight) return NONE;
+  }
+
+  const push =
+    next === undefined ? 0 : Math.min(barHeight, Math.max(0, areaTop + barHeight - next.top));
   return { kind: "show", index: chosen, push };
 }

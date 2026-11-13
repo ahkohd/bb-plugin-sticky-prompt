@@ -9,6 +9,8 @@ top of the chat, as Cursor does. Click the pinned message to scroll back to it.
   it, cut to two lines, stays pinned there.
 - As your next message comes up to the top, it pushes the pinned one away
   and takes its place.
+- A turn that fits on screen is not pinned: you can already see your
+  message and the end of the reply together.
 - By default only messages you typed are pinned. Messages from other
   threads, agents and BB system notices are skipped.
 

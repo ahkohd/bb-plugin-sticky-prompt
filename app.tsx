@@ -239,6 +239,7 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
         outlineIds,
         areaTop: areaRect.top,
         barHeight: stripRef.current?.offsetHeight || 56,
+        areaHeight: scrollEl.clientHeight,
         owners: ownersRef.current,
         eligible: (index) => {
           if (includeRef.current) return true;
@@ -319,15 +320,19 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
           pointerEvents: "auto",
           width: "100%",
           textAlign: "left",
-          borderRadius: 12,
-          border: "1px solid var(--border-seam, var(--border))",
-          background: "var(--surface-recessed-solid, var(--background))",
+          // The same surface as BB's own user message bubble:
+          // rounded-xl border border-border-seam bg-surface-recessed px-4 py-2.5
+          // text-sm leading-relaxed. The strip behind it is opaque, so the
+          // translucent recessed surface reads exactly as it does in the chat.
+          borderRadius: "0.75rem",
+          border: "1px solid var(--border-seam)",
+          background: "var(--surface-recessed)",
           color: "var(--foreground)",
-          padding: "8px 16px",
-          fontSize: 14,
-          lineHeight: 1.5,
+          padding: "0.625rem 1rem",
+          fontSize: "0.875rem",
+          lineHeight: 1.625,
+          fontFamily: "inherit",
           cursor: "pointer",
-          boxShadow: "0 6px 16px -10px rgb(0 0 0 / 0.5)",
         }}
       >
         <span

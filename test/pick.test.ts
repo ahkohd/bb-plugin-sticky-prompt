@@ -18,7 +18,7 @@ function run(
   eligible: (index: number) => Eligibility = all,
   owners = new Map<string, number>(),
 ) {
-  return pick({ entries, outlineIds, areaTop: 0, barHeight: 50, eligible, owners });
+  return pick({ entries, outlineIds, areaTop: 0, barHeight: 50, areaHeight: 300, eligible, owners });
 }
 
 describe("pick", () => {
@@ -56,12 +56,30 @@ describe("pick", () => {
       push: 45,
     });
     // u1's top has reached the top: it sticks at once.
-    expect(run([row("u0", -300), row("a0", -200, 150), row("u1", -50)], outline)).toEqual({
+    expect(
+      run([row("u0", -300), row("a0", -200, 150), row("u1", -50), row("a1", 50, 400)], outline),
+    ).toEqual({
       kind: "show",
       index: 1,
       push: 0,
     });
     expect(run([row("u1", -150), row("a1", -50, 400)], outline)).toEqual({
+      kind: "show",
+      index: 1,
+      push: 0,
+    });
+  });
+
+  it("does not pin a turn that fits on screen", () => {
+    const outline = ["u0", "u1"];
+    // u0 and the start of u1 are 240px apart in a 300px view.
+    expect(
+      run([row("u0", -40), row("a0", 60, 140), row("u1", 200, 60), row("a1", 260, 400)], outline),
+    ).toEqual({ kind: "none" });
+    // The last turn ends at the newest row.
+    expect(run([row("u1", -40), row("a1", 60, 200)], outline)).toEqual({ kind: "none" });
+    // A reply that runs past the view is pinned.
+    expect(run([row("u1", -40), row("a1", 60, 400)], outline)).toEqual({
       kind: "show",
       index: 1,
       push: 0,
