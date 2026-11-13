@@ -84,6 +84,13 @@ describe("bar markdown", () => {
     expect(barMarkdown(text, 40)).toBe("Intro\n`const a = 1;`");
   });
 
+  it("leaves tables out", () => {
+    expect(barMarkdown("Compare:\n\n| a | b |\n| --- | :-: |\n| 1 | 2 |\n\nWhich one?")).toBe(
+      "Compare:\n\n\nWhich one?",
+    );
+    expect(barMarkdown("Pipes | in prose stay")).toBe("Pipes | in prose stay");
+  });
+
   it("uses double backticks for code that contains one", () => {
     expect(barMarkdown("~~~\nlet s = `x`;\n~~~")).toBe("`` let s = `x`; ``");
   });

@@ -61,6 +61,7 @@ ${T} :is(p, h1, h2, h3, h4, h5, h6, li, pre, blockquote)::after { content: " "; 
 ${T} li::before, ${T} li::marker { content: none; }
 ${T} pre, ${T} pre code { white-space: normal; }
 ${T} :is(button, img, video, iframe, table, hr, input) { display: none; }
+${T} div:has(> table), ${T} div:has(> div > table) { display: none; }
 [data-sticky-prompt-bar]:focus { outline: none; }
 [data-sticky-prompt-bar]:focus-visible {
   outline: 2px solid var(--ring, currentColor); outline-offset: -3px;

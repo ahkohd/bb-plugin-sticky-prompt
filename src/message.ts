@@ -59,6 +59,28 @@ function inlineFences(source: string): string {
   return out.join("\n");
 }
 
+const TABLE_DELIMITER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/**
+ * Tables are left out of the bar: rendered and hidden inside its one line,
+ * BB's scrolling table wrapper lays the lines on top of each other.
+ */
+function withoutTables(source: string): string {
+  const lines = source.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const next = lines[i + 1] ?? "";
+    if (line.includes("|") && next.includes("-") && TABLE_DELIMITER.test(next)) {
+      i += 1;
+      while (i + 1 < lines.length && (lines[i + 1] ?? "").includes("|")) i += 1;
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 /**
  * BB's own bubbles replace the sender prefix with a sender line. The bar has
  * no room for one: a thread mention stands in for the sending thread, and
@@ -72,7 +94,7 @@ export function withoutSenderPrefix(text: string): string {
 
 /**
  * The start of a message as Markdown for the two-line bar: cut long text at a
- * line break, turn code blocks into inline code, show every image (inline,
+ * line break, turn code blocks into inline code, drop tables, show every image (inline,
  * reference or shortcut) as its alt text, and escape directive lines so
  * nothing embeds or loads from the bar.
  */
@@ -84,7 +106,7 @@ export function barMarkdown(text: string, max = MAX_SOURCE): string {
   }
   // Repeat until nothing changes: an image in another image's alt text
   // leaves an image behind. Each pass shortens the text, so this ends.
-  let out = inlineFences(source);
+  let out = withoutTables(inlineFences(source));
   for (;;) {
     const next = out.replace(/!\[([^\]]*)\](\([^)]*\)|\[[^\]]*\])?/g, "$1");
     if (next === out) break;
