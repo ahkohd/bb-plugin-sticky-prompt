@@ -23,6 +23,8 @@ The same demo as a video: [docs/demo.mp4](docs/demo.mp4).
   look as they do in your message. Paragraphs and list items run together
   on one line. Code blocks show as inline code; tables and images in the
   text are left out.
+- Mentions in your message (inline comments, threads, files, commands) show
+  as the same chips BB draws in your message.
 - A message with images shows up to three small thumbnails, then a count of
   the rest.
 - Scrolling with the pointer or a finger on the bar scrolls the chat.
