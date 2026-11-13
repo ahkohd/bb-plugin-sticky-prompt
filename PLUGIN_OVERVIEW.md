@@ -3,9 +3,9 @@ so you always know what the agent is answering.
 
 ## What you get
 
-- Once your message scrolls out of view, a two-line copy of it stays at the
-  top of the chat.
-- Your next message pushes it away when it reaches the top.
+- As soon as your message reaches the top of the chat, a two-line copy of it
+  stays there.
+- Your next message pushes it away as it comes up to the top.
 - Click the pinned message to scroll back to it.
 - Only messages you typed are pinned. A setting adds messages from agents,
   other threads and BB system notices.

@@ -26,6 +26,14 @@ describe("pick", () => {
     expect(run([row("u0", 10), row("a0", 110)], ["u0"])).toEqual({ kind: "none" });
   });
 
+  it("pins a message as soon as its top reaches the top", () => {
+    expect(run([row("u0", 0), row("a0", 100, 400)], ["u0"])).toEqual({
+      kind: "show",
+      index: 0,
+      push: 0,
+    });
+  });
+
   it("pins a message once it has scrolled past the top", () => {
     expect(run([row("u0", -200), row("a0", -100, 400)], ["u0"])).toEqual({
       kind: "show",
@@ -41,11 +49,17 @@ describe("pick", () => {
       index: 0,
       push: 30,
     });
-    // u1 partly visible: the bar shows u0, fully pushed away.
-    expect(run([row("u0", -300), row("a0", -200, 150), row("u1", -50)], outline)).toEqual({
+    // u1 just below the bar: u0 is almost pushed away.
+    expect(run([row("u0", -300), row("a0", -200, 205), row("u1", 5)], outline)).toEqual({
       kind: "show",
       index: 0,
-      push: 50,
+      push: 45,
+    });
+    // u1's top has reached the top: it sticks at once.
+    expect(run([row("u0", -300), row("a0", -200, 150), row("u1", -50)], outline)).toEqual({
+      kind: "show",
+      index: 1,
+      push: 0,
     });
     expect(run([row("u1", -150), row("a1", -50, 400)], outline)).toEqual({
       kind: "show",

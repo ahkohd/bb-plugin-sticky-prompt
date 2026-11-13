@@ -5,10 +5,10 @@ top of the chat, as Cursor does. Click the pinned message to scroll back to it.
 
 ## Behaviour
 
-- Once your message scrolls past the top of the chat, a full-width copy of it,
-  cut to two lines, stays pinned there.
-- When your next message reaches the top, it pushes the pinned one away and
-  takes its place.
+- As soon as your message reaches the top of the chat, a full-width copy of
+  it, cut to two lines, stays pinned there.
+- As your next message comes up to the top, it pushes the pinned one away
+  and takes its place.
 - By default only messages you typed are pinned. Messages from other
   threads, agents and BB system notices are skipped.
 

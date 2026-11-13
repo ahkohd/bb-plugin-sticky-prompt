@@ -86,8 +86,9 @@ export function pick(input: PickInput): PickResult {
   let candidate: number | undefined;
   const topUser = indexById.get(topEntry.id);
   if (topUser !== undefined) {
-    // That message is still partly visible: the one before it is pinned.
-    candidate = topUser - 1;
+    // A message sticks as soon as its top reaches the top of the chat, like
+    // a sticky header. Until then the one before it stays pinned.
+    candidate = topEntry.top <= areaTop + 1 ? topUser : topUser - 1;
   } else {
     candidate = owner[topIndex];
   }
