@@ -57,9 +57,12 @@ function Anchor({ message }: ExperimentalMessageMetadataProps) {
   return null;
 }
 
+/** BB cuts outline previews at this many characters, without an ellipsis. */
+const PREVIEW_MAX_LENGTH = 200;
+
 function labelFor(item: OutlineItem): string {
   const text = item.preview.replace(/\s+/g, " ").trim();
-  if (text !== "") return text;
+  if (text !== "") return item.preview.length >= PREVIEW_MAX_LENGTH ? `${text}…` : text;
   const attachments = item.attachmentSummary;
   if (attachments !== null) {
     if (attachments.imageCount === 1 && attachments.fileCount === 0) return "Image attachment";
@@ -99,7 +102,15 @@ async function jumpTo(scrollEl: HTMLElement, id: string): Promise<void> {
   }
 }
 
-function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean }) {
+function StickyBar({
+  area,
+  includeOthers,
+  fadeEdge,
+}: {
+  area: Area;
+  includeOthers: boolean;
+  fadeEdge: boolean;
+}) {
   const sdk = useSdk();
   const { scrollEl, threadId } = area;
   const [host, setHost] = useState<HTMLDivElement | null>(null);
@@ -289,7 +300,7 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
 
   useEffect(() => {
     scheduleRef.current();
-  }, [includeOthers, shown]);
+  }, [includeOthers, fadeEdge, shown]);
 
   if (host === null || shown === null) return null;
   return createPortal(
@@ -297,9 +308,11 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
       ref={stripRef}
       style={{
         display: "flex",
-        padding: "8px 0 16px",
-        background:
-          "linear-gradient(to bottom, var(--background) 0, var(--background) calc(100% - 16px), transparent 100%)",
+        // Flat like the rest of BB: a hard edge unless the fade is turned on.
+        padding: fadeEdge ? "8px 0 16px" : "8px 0",
+        background: fadeEdge
+          ? "linear-gradient(to bottom, var(--background) 0, var(--background) calc(100% - 16px), transparent 100%)"
+          : "var(--background)",
       }}
     >
       <button
@@ -349,6 +362,7 @@ function Overlay() {
   const { values } = useSettings();
   const enabled = values?.enabled !== false;
   const includeOthers = values?.includeOtherSenders === true;
+  const fadeEdge = values?.fadeEdge === true;
   useEffect(() => {
     const timer = window.setInterval(prune, 2000);
     return () => window.clearInterval(timer);
@@ -357,7 +371,12 @@ function Overlay() {
   return (
     <>
       {areas.map((area) => (
-        <StickyBar key={`${area.key}:${area.threadId}`} area={area} includeOthers={includeOthers} />
+        <StickyBar
+          key={`${area.key}:${area.threadId}`}
+          area={area}
+          includeOthers={includeOthers}
+          fadeEdge={fadeEdge}
+        />
       ))}
     </>
   );

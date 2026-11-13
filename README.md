@@ -6,7 +6,8 @@ top of the chat, as Cursor does. Click the pinned message to scroll back to it.
 ## Behaviour
 
 - As soon as your message reaches the top of the chat, a full-width copy of
-  it, cut to two lines, stays pinned there.
+  it, cut to two lines, stays pinned there. BB's preview of a message stops
+  at 200 characters; a cut preview ends in an ellipsis.
 - As your next message comes up to the top, it pushes the pinned one away
   and takes its place.
 - A turn that fits on screen is not pinned: you can already see your
@@ -23,6 +24,7 @@ Open Settings, then Installed plugins, then Sticky Prompt, or use
 | --- | --- | --- |
 | `enabled` | on | Show the pinned message. |
 | `includeOtherSenders` | off | Also pin messages from agents, other threads and BB. |
+| `fadeEdge` | off | Fade the reply in under the bar instead of a hard edge. |
 
 ## How it works
 

@@ -22,6 +22,13 @@ export default async function plugin(bb: BbPluginApi) {
         "Off: only messages you typed are pinned. On: messages from other threads, agents and BB system notices are pinned too.",
       default: false,
     },
+    fadeEdge: {
+      type: "boolean",
+      label: "Fade the edge under the pinned message",
+      description:
+        "Off: the bar has a hard, flat edge like the rest of BB. On: the reply fades in under it.",
+      default: false,
+    },
   });
 
   bb.cli.register({
