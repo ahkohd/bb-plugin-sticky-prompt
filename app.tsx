@@ -305,7 +305,6 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
       ref={stripRef}
       style={{
         display: "flex",
-        justifyContent: "flex-end",
         padding: "8px 0 16px",
         background:
           "linear-gradient(to bottom, var(--background) 0, var(--background) calc(100% - 16px), transparent 100%)",
@@ -318,7 +317,7 @@ function StickyBar({ area, includeOthers }: { area: Area; includeOthers: boolean
         onClick={() => void jumpTo(scrollEl, shown.id)}
         style={{
           pointerEvents: "auto",
-          maxWidth: "70%",
+          width: "100%",
           textAlign: "left",
           borderRadius: 12,
           border: "1px solid var(--border-seam, var(--border))",
