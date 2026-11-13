@@ -8,6 +8,7 @@ const row = (id: string, top: number, height = 100): Entry => ({
   bottom: top + height,
 });
 const spacer: Entry = { kind: "spacer" };
+const unlisted = (top: number, height = 60): Entry => ({ kind: "break", top, bottom: top + height });
 const all = (): Eligibility => true;
 
 function run(
@@ -144,6 +145,22 @@ describe("pick", () => {
       index: 0,
       push: 0,
     });
+  });
+
+  it("a message the outline does not list yet stops the previous one", () => {
+    const outline = ["u0", "u1"];
+    // Its reply at the top belongs to it, not to u1: show nothing.
+    expect(
+      run([row("u1", -800, 60), row("a1", -740, 600), unlisted(-140), row("a2", -80, 900)], outline),
+    ).toEqual({ kind: "none" });
+    // It pushes u1's bar away as it comes up, like any message.
+    expect(run([row("u1", -500, 60), row("a1", -440, 460), unlisted(20)], outline)).toEqual({
+      kind: "show",
+      index: 1,
+      push: 30,
+    });
+    // And it rules out the last-turn guess.
+    expect(run([spacer, row("x", -20, 300), unlisted(280)], outline)).toEqual({ kind: "none" });
   });
 
   it("asks for the sender when it is not known", () => {

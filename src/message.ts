@@ -82,7 +82,12 @@ export function barMarkdown(text: string, max = MAX_SOURCE): string {
     const cut = source.lastIndexOf("\n", max);
     source = source.slice(0, cut > max / 2 ? cut : max).trimEnd();
   }
-  return inlineFences(source)
-    .replace(/!\[([^\]]*)\](\([^)]*\)|\[[^\]]*\])?/g, "$1")
-    .replace(/^(\s*):/gm, "$1\\:");
+  // Repeat: an image in another image's alt text leaves an image behind.
+  let out = inlineFences(source);
+  for (let pass = 0; pass < 8; pass++) {
+    const next = out.replace(/!\[([^\]]*)\](\([^)]*\)|\[[^\]]*\])?/g, "$1");
+    if (next === out) break;
+    out = next;
+  }
+  return out.replace(/^(\s*):/gm, "$1\\:");
 }

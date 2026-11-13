@@ -287,6 +287,9 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
     let lastOutlineFetch = 0;
     let outlineInFlight = false;
     let outlineTimer = 0;
+    let outlineTimerAt = 0;
+    let failures = 0;
+    let failRetryAt = 0;
     let refreshForGuess = false;
     let lastRowId: string | null = null;
     let lastRowAtFetch: string | null = null;
@@ -304,10 +307,6 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
       hostEl.style.visibility = "hidden";
     };
 
-    const due = (now: number) =>
-      refreshForGuess ||
-      [...wanted].some((id) => (misses.get(id)?.retryAt ?? 0) <= now);
-
     const missed = (id: string, now: number) => {
       const count = (misses.get(id)?.count ?? 0) + 1;
       misses.set(id, { count, retryAt: now + Math.min(60_000, OUTLINE_REFRESH_MS * 2 ** count) });
@@ -324,6 +323,8 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
         itemsRef.current = items;
         outlineRef.current = makeOutline(items.map((item) => item.id));
         lastRowAtFetch = rowAtFetch;
+        failures = 0;
+        failRetryAt = 0;
         const now = Date.now();
         for (const id of [...wanted]) {
           if (outlineRef.current.indexById.has(id)) {
@@ -335,8 +336,8 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
         }
       } catch (error) {
         if (signal.aborted) return;
-        const now = Date.now();
-        for (const id of wanted) missed(id, now);
+        failures += 1;
+        failRetryAt = Date.now() + Math.min(60_000, OUTLINE_REFRESH_MS * 2 ** failures);
         console.warn("[sticky-prompt] could not read the outline", error);
       } finally {
         outlineInFlight = false;
@@ -347,24 +348,29 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
       }
     };
 
+    // Fetch when the earliest pending need is due, no sooner than the
+    // interval or a failure backoff allows. A newer, earlier need moves a
+    // timer that was set for a later one.
     function requestOutline() {
-      if (signal.aborted || outlineInFlight || outlineTimer !== 0) return;
+      if (signal.aborted || outlineInFlight) return;
       const now = Date.now();
-      const backoff = [...wanted].reduce(
-        (soonest, id) => Math.min(soonest, misses.get(id)?.retryAt ?? now),
-        refreshForGuess ? now : Number.POSITIVE_INFINITY,
-      );
-      if (!Number.isFinite(backoff)) return;
-      const at = Math.max(lastOutlineFetch + OUTLINE_REFRESH_MS, backoff);
-      if (at > now) {
-        outlineTimer = window.setTimeout(() => {
-          outlineTimer = 0;
-          if (due(Date.now())) void fetchOutline();
-          else requestOutline();
-        }, at - now);
+      let soonest = refreshForGuess ? now : Number.POSITIVE_INFINITY;
+      for (const id of wanted) soonest = Math.min(soonest, misses.get(id)?.retryAt ?? now);
+      if (!Number.isFinite(soonest)) return;
+      const at = Math.max(lastOutlineFetch + OUTLINE_REFRESH_MS, failRetryAt, soonest);
+      if (at <= now) {
+        window.clearTimeout(outlineTimer);
+        outlineTimer = 0;
+        void fetchOutline();
         return;
       }
-      void fetchOutline();
+      if (outlineTimer !== 0 && outlineTimerAt <= at) return;
+      window.clearTimeout(outlineTimer);
+      outlineTimerAt = at;
+      outlineTimer = window.setTimeout(() => {
+        outlineTimer = 0;
+        requestOutline();
+      }, at - now);
     }
 
     const lookupSender = async (id: string) => {
@@ -411,17 +417,17 @@ export function StickyBar({ area, includeOthers }: { area: Area; includeOthers: 
         }
         own += 1;
         lastRowId = id;
+        const rect = node.getBoundingClientRect();
         // A user message the outline does not have yet: ask for it, and let
         // it end the turn above rather than lend its reply to that turn.
         if (USER_ROW.test(id) && !outline.indexById.has(id)) {
           wanted.add(id);
-          entries.push({ kind: "spacer" });
+          entries.push({ kind: "break", top: rect.top, bottom: rect.bottom });
           continue;
         }
-        const rect = node.getBoundingClientRect();
         entries.push({ kind: "row", id, top: rect.top, bottom: rect.bottom });
       }
-      if (due(Date.now())) requestOutline();
+      if (wanted.size > 0 || refreshForGuess) requestOutline();
       // Only another thread's rows: the pane has switched and this bar is
       // about to go. Never pin across threads.
       if ((own === 0 && foreign > 0) || outline.ids.length === 0) return hide();

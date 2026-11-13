@@ -1,12 +1,14 @@
 // Decide which of your messages the sticky bar shows.
 //
 // Pure so it can be tested without a DOM. The caller reads the top-level
-// timeline in DOM order: mounted rows with their on-screen box, and the
-// spacers BB puts where it has unmounted rows (it windows long threads).
+// timeline in DOM order: mounted rows with their on-screen box, the spacers
+// BB puts where it has unmounted rows (it windows long threads), and breaks:
+// user messages on screen that the outline does not list yet.
 
 export type Entry =
   | { kind: "row"; id: string; top: number; bottom: number }
-  | { kind: "spacer" };
+  | { kind: "spacer" }
+  | { kind: "break"; top: number; bottom: number };
 
 /** true: pin it; false: skip it; "unknown": its sender is not known yet. */
 export type Eligibility = boolean | "unknown";
@@ -59,22 +61,29 @@ export function pick(input: PickInput): PickResult {
   if (outlineIds.length === 0) return NONE;
 
   // Which user message each mounted row falls under. A spacer may hide user
-  // messages, so knowledge never crosses one.
+  // messages, so knowledge never crosses one. Rows after a break belong to a
+  // message the outline does not have: they are owned by no one known.
   const owner: (number | undefined)[] = new Array(entries.length);
+  const orphan: boolean[] = new Array(entries.length).fill(false);
   let running: number | undefined;
   let pending: number[] = [];
+  let afterBreak = false;
   entries.forEach((entry, i) => {
-    if (entry.kind === "spacer") {
+    if (entry.kind !== "row") {
       running = undefined;
       pending = [];
+      afterBreak = entry.kind === "break";
       return;
     }
     const userIndex = indexById.get(entry.id);
     if (userIndex !== undefined) {
       for (const p of pending) owner[p] = userIndex - 1;
       pending = [];
+      afterBreak = false;
       running = userIndex;
       owner[i] = userIndex;
+    } else if (afterBreak) {
+      orphan[i] = true;
     } else if (running !== undefined) {
       owner[i] = running;
     } else {
@@ -82,7 +91,7 @@ export function pick(input: PickInput): PickResult {
     }
   });
   entries.forEach((entry, i) => {
-    if (entry.kind !== "row") return;
+    if (entry.kind !== "row" || orphan[i]) return;
     const known = owner[i];
     if (known !== undefined) {
       owners.set(entry.id, known < 0 ? null : (outlineIds[known] ?? null));
@@ -93,17 +102,19 @@ export function pick(input: PickInput): PickResult {
     else if (remembered !== undefined) owner[i] = indexById.get(remembered);
   });
 
-  // The first row still on screen.
+  // The first row still on screen. Under a message the outline lacks, show
+  // nothing rather than an older message.
   let topIndex = -1;
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    if (entry?.kind === "row" && entry.bottom > areaTop + 1) {
+    if (entry !== undefined && entry.kind !== "spacer" && entry.bottom > areaTop + 1) {
       topIndex = i;
       break;
     }
   }
   if (topIndex < 0) return NONE;
-  const topEntry = entries[topIndex] as Extract<Entry, { kind: "row" }>;
+  const topEntry = entries[topIndex];
+  if (topEntry?.kind !== "row" || orphan[topIndex]) return NONE;
 
   let candidate: number | undefined;
   const topUser = indexById.get(topEntry.id);
@@ -136,10 +147,14 @@ export function pick(input: PickInput): PickResult {
   if (chosen < 0) return NONE;
 
   // The next pinned message ends this turn and pushes the bar up as it
-  // reaches the top.
-  let next: Extract<Entry, { kind: "row" }> | undefined;
+  // reaches the top. A message the outline lacks counts as one.
+  let next: { top: number } | undefined;
   for (let i = topIndex; i < entries.length; i++) {
     const entry = entries[i];
+    if (entry?.kind === "break") {
+      next = entry;
+      break;
+    }
     if (entry?.kind !== "row") continue;
     const userIndex = indexById.get(entry.id);
     if (userIndex === undefined || userIndex <= chosen) continue;

@@ -94,6 +94,7 @@ describe("bar markdown", () => {
       "chart and logo and icon\n\n[plot]: https://example.com/p.png",
     );
     expect(barMarkdown("::inline-vis{file=\"a.html\"}\ntext")).toBe("\\::inline-vis{file=\"a.html\"}\ntext");
+    expect(barMarkdown("![![chart](https://example.com/in.png)](https://example.com/out.png)")).toBe("chart");
   });
 });
 
