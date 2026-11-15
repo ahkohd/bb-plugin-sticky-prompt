@@ -223,6 +223,12 @@ function holdPosition(parent: HTMLElement): () => void {
   };
 }
 
+// The classes BB 0.49 adds to the pill and its icon in a message bubble, on
+// top of the pill class describePromptMention gives. Without the icon class
+// the icon is drawn at its default size and sits on the text's baseline.
+const CHIP_CLASS = "bg-surface-raised/50 font-normal no-underline cursor-default";
+const CHIP_ICON_CLASS = "size-3.5 shrink-0 self-center text-muted-foreground";
+
 /** A mention drawn the way BB draws it in the bubble, or as a plain pill. */
 function MentionChip({ part }: { part: Extract<BarPart, { kind: "mention" }> }) {
   const target = mentionTarget(part) as ExperimentalComposerMentionTarget;
@@ -231,7 +237,7 @@ function MentionChip({ part }: { part: Extract<BarPart, { kind: "mention" }> }) 
   let known = false;
   try {
     const presentation = describePromptMention(target);
-    className = presentation.className;
+    className = `${presentation.className} ${CHIP_CLASS}`;
     title = presentation.title || part.label;
     known = true;
   } catch {
@@ -244,7 +250,7 @@ function MentionChip({ part }: { part: Extract<BarPart, { kind: "mention" }> }) 
       title={title}
       style={
         known
-          ? { margin: "0 0.2em", verticalAlign: "baseline" }
+          ? { margin: "0 0.2em" }
           : {
               margin: "0 0.2em",
               padding: "0 0.4em",
@@ -253,8 +259,8 @@ function MentionChip({ part }: { part: Extract<BarPart, { kind: "mention" }> }) 
             }
       }
     >
-      {known ? <PromptMentionIcon mention={target} /> : null}
-      {part.label}
+      {known ? <PromptMentionIcon mention={target} className={CHIP_ICON_CLASS} /> : null}
+      <span className="truncate">{part.label}</span>
     </span>
   );
 }
